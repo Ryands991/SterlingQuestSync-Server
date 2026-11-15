@@ -6,3 +6,4 @@ wrangler.toml
 *.log
 deploy.cmd
 set-secrets.cmd
+push-to-github.cmd
