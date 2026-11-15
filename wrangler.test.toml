@@ -1,0 +1,25 @@
+# Used only by the local tests. Nothing here points at a real account.
+name = "sterling-quest-sync-test"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "test"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[ratelimits]]
+name = "RL_SIGNUP"
+namespace_id = "1"
+simple = { limit = 1000, period = 60 }
+
+[[ratelimits]]
+name = "RL_CODES"
+namespace_id = "2"
+simple = { limit = 1000, period = 60 }
+
+[[ratelimits]]
+name = "RL_API"
+namespace_id = "3"
+simple = { limit = 1000, period = 60 }

@@ -1,0 +1,48 @@
+# Copy this to wrangler.toml and fill in your own values. wrangler.toml is git-ignored.
+name = "sterling-quest-sync"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = false
+
+# Your own domain on Cloudflare, for example sync.example.com
+routes = [{ pattern = "sync.example.com", custom_domain = true }]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sterling-quest-sync"
+database_id = "PASTE-YOUR-DATABASE-ID"
+migrations_dir = "migrations"
+
+# Edge rate limits. Periods can only be 10 or 60 seconds. namespace_id is any number unique on your account.
+[[ratelimits]]
+name = "RL_SIGNUP"
+namespace_id = "7101"
+simple = { limit = 5, period = 60 }
+
+[[ratelimits]]
+name = "RL_CODES"
+namespace_id = "7102"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "RL_API"
+namespace_id = "7103"
+simple = { limit = 120, period = 60 }
+
+# Hourly: usage check, plus cleanup once a day.
+[triggers]
+crons = ["17 * * * *"]
+
+[vars]
+USAGE_ALERT_PCT = "60"
+# Optional usage alert email. Needs Email Routing on your domain with the destination verified.
+# ALERT_FROM = "alerts@example.com"
+# ALERT_TO = "you@example.com"
+
+# [[send_email]]
+# name = "ALERT_EMAIL"
+# destination_address = "you@example.com"
+
+# Secrets (set with `npx wrangler secret put NAME`, never in this file):
+#   CF_API_TOKEN   read-only token with Account Analytics: Read
+#   CF_ACCOUNT_ID  your Cloudflare account ID

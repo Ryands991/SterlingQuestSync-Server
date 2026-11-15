@@ -1,0 +1,60 @@
+# Sterling Quest Sync, server
+
+**Status:** Still in heavy development and not finished yet. Things are mostly settled now, but big changes can still come with an update.
+
+**Access:** Sign-up is open. The Sterling Quest Sync app makes your account the first time you run it, with no email or password. You can also run your own server with the [setup guide](SETUP.md).
+
+Sterling began as a little project for me and a few close friends, so we could keep our quests in step while we adventure together, even with different schedules. It's been a lot of fun to build, so I'm sharing it here in case anyone else finds it useful. It's shaped by how we like to play, and it gets updates whenever I can find the time. Ideas and bug reports are always welcome.
+
+> Built by Kael with the help of Claude Opus, an AI model by Anthropic. The ideas, testing and decisions are mine; much of the code was written with Claude. Everything is tested in game with friends.
+
+## What this is
+
+Sterling Quest Tracker already syncs quest progress live between friends who are online together. This server covers the rest: when your play times don't overlap, the [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App) uploads your latest copy when you log off, and your friend's app picks it up before they log in.
+
+It's one Cloudflare Worker and one D1 database. The server is a mailbox: it keeps the latest full copy per character and partner, checks who may read what, and numbers every upload. It never runs anything in the game, and it treats the copies it carries as opaque.
+
+Related: [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQuest) · [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App)
+
+## How it stays safe
+
+- **Who you are comes only from your key.** The app makes a random 256-bit key on each PC. The server stores only its SHA-256.
+- **Data only flows through a pairing.** One friend makes a pairing code, the other redeems it. Codes are random, single use, expire in 24 hours, and are rate limited. Nobody can send a request to a stranger, and listing a character's GUID grants nothing.
+- **Newest save wins.** Uploads carry the game's server time from the save, and the server refuses older ones.
+- **Strict input.** Copies must match `^[A-Za-z0-9()]+$` and stay under 64 KB. Every query uses bound parameters. There are no listing endpoints.
+- **No admin API.** Owner jobs run through Wrangler on the owner's own machine, behind their Cloudflare login.
+- **The trust we accept:** pair signing keys pass through the server, so whoever runs a server could forge partner progress. It can't run code in anyone's game or touch a character.
+
+The `test/attacks.test.ts` file is the bad-actor suite: every attack in it must fail, and it runs with every change.
+
+## Privacy
+
+What's stored:
+
+- Your account (a random ID), and for each PC a hashed key, a label you pick and when it was last seen.
+- The characters you list: GUID, name and realm.
+- Your pairings, and the latest copy of your quest log and finished quests for each partner (and one for your own other PCs).
+- When each copy was uploaded. Upload times show roughly when you play.
+
+What isn't: no email, no password, no IP addresses, no WoW account names.
+
+- Quest copies are packed, **not encrypted**. Whoever runs the server can read them.
+- **Expiry:** accounts that never pair are removed after 7 days. Copies nobody has touched in about 30 days are removed. Accounts idle for about 12 months are removed with their pairings.
+- **Delete my data** in the app removes your account, PCs, characters, pairings and copies right away. Copies already delivered to a friend's PC stay on their PC.
+- Cloudflare keeps a short restore history of the database (Time Travel: 7 days on the free plan, 30 on paid), so deleted data can linger there for that long.
+
+## Run your own
+
+See [SETUP.md](SETUP.md). It works on a free Cloudflare account.
+
+## Developing
+
+```sh
+npm install
+npm test          # runs the API and bad-actor tests against a local D1
+npm run typecheck
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
