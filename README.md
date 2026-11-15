@@ -10,11 +10,11 @@ Sterling began as a little project for me and a few close friends, so we could k
 
 ## What this is
 
-Sterling Quest Tracker already syncs quest progress live between friends who are online together. This server covers the rest: when your play times don't overlap, the [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App) uploads your latest copy when you log off, and your friend's app picks it up before they log in.
+Sterling Quest Tracker already syncs quest progress live between friends who are online together. This server covers the rest: when your play times don't overlap, the Sterling Quest Sync app (coming soon) uploads your latest copy when you log off, and your friend's app picks it up before they log in.
 
 It's one Cloudflare Worker and one D1 database. The server is a mailbox: it keeps the latest full copy per character and partner, checks who may read what, and numbers every upload. It never runs anything in the game, and it treats the copies it carries as opaque.
 
-Related: [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQuest) · [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App)
+Related: [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQuest) · Sterling Quest Sync app (coming soon)
 
 ## How it stays safe
 
