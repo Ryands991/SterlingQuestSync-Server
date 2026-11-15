@@ -5,3 +5,4 @@ wrangler.toml
 .dev.vars
 *.log
 deploy.cmd
+set-secrets.cmd
