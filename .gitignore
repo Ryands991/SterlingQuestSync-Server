@@ -4,3 +4,4 @@ wrangler.toml
 .admin.env
 .dev.vars
 *.log
+deploy.cmd
