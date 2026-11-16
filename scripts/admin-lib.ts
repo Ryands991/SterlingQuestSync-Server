@@ -3,9 +3,10 @@
 // route on the server: these talk to D1 directly with fixed SQL. Nothing here takes free text.
 
 import { spawn } from "node:child_process";
-import { homedir, tmpdir } from "node:os";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { fetchUsage, fetchHealth, percentages, FREE_LIMITS } from "../src/usage";
 
 export const ID = /^[0-9a-f]{16}$/;
@@ -104,26 +105,30 @@ function serverUrl(): string | null {
   return m ? "https://" + m[1] : null;
 }
 
-/** Runs fixed SQL and returns one result list per statement. SQL goes through a temp file, never the command line. */
+/**
+ * Runs Wrangler directly with Node, with no shell in between, so nothing in an argument is ever
+ * interpreted by cmd.exe. (A remote `--file` run goes through D1's import path, which returns no
+ * rows, so queries use `--command`.)
+ */
+function wrangler(args: string[]) {
+  const bin = join(dirname(fileURLToPath(import.meta.url)), "..", "node_modules", "wrangler", "bin", "wrangler.js");
+  if (!existsSync(bin)) throw new AdminError("Wrangler isn't installed in this folder. Run npm install here, then try again.");
+  return spawn(process.execPath, [bin, ...args], { env: wranglerEnv(), windowsHide: true });
+}
+
+/** Runs fixed SQL and returns one result list per statement. Only fixed text, checked ids and numbers go in. */
 export function d1Sets(sql: string): Promise<any[][]> {
-  const dir = mkdtempSync(join(tmpdir(), "sqs-admin-"));
-  const file = join(dir, "q.sql");
-  writeFileSync(file, sql);
+  const oneLine = sql.replace(/\s+/g, " ").trim();
   return new Promise((resolve, reject) => {
-    const p = spawn("npx", ["wrangler", "d1", "execute", dbName(), ...target(), "--json", "--file", file], {
-      shell: process.platform === "win32",
-      env: wranglerEnv(),
-    });
+    const p = wrangler(["d1", "execute", dbName(), ...target(), "--json", "--command", oneLine]);
     let out = "";
     let err = "";
     p.stdout.on("data", (d) => (out += d));
     p.stderr.on("data", (d) => (err += d));
     p.on("error", (e) => {
-      rmSync(dir, { recursive: true, force: true });
       reject(new AdminError("Couldn't start Wrangler: " + e.message));
     });
     p.on("close", (code) => {
-      rmSync(dir, { recursive: true, force: true });
       if (code !== 0) {
         const text = (err || out).trim();
         const hint = /login|auth|not authorized|10000/i.test(text)
@@ -381,10 +386,7 @@ export function backup(): Promise<{ file: string; dir: string }> {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const file = join(dir, `sterling-quest-sync-${stamp}.sql`);
   return new Promise((resolve, reject) => {
-    const p = spawn("npx", ["wrangler", "d1", "export", dbName(), ...target(true), "--output", file], {
-      shell: process.platform === "win32",
-      env: wranglerEnv(),
-    });
+    const p = wrangler(["d1", "export", dbName(), ...target(true), "--output", file]);
     let err = "";
     p.stderr.on("data", (d) => (err += d));
     p.stdout.on("data", (d) => (err += d));
