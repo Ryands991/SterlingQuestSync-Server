@@ -1,12 +1,12 @@
 # Sterling Quest Sync, server
 
+**For use with [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQuest).** Start there for the big picture of what Sterling does and how the pieces fit together. This page is all about the sync server.
+
+**You don't need to run this.** The [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App) connects to my server at `sync.sterlingaddons.com`, free for everyone. This repo is the code behind it, here so you can see exactly what it does, or run your own if you'd rather.
+
 **Status:** Still in heavy development and not finished yet. Things are mostly settled now, but big changes can still come with an update.
 
-**Access:** Sign-up is open. The Sterling Quest Sync app makes your account the first time you run it, with no email or password. You can also run your own server with the [setup guide](SETUP.md).
-
-Sterling began as a little project for me and a few close friends, so we could keep our quests in step while we adventure together, even with different schedules. It's been a lot of fun to build, so I'm sharing it here in case anyone else finds it useful. It's shaped by how we like to play, and it gets updates whenever I can find the time. Ideas and bug reports are always welcome.
-
-> Built by Kael with the help of Claude Opus, an AI model by Anthropic. The ideas, testing and decisions are mine; much of the code was written with Claude. Everything is tested in game with friends.
+**Access:** Sign-up is open. The app makes your account the first time you run it, with no email or password. To run your own instead, see the [setup guide](SETUP.md).
 
 ## What this is
 
@@ -61,3 +61,5 @@ npm run typecheck
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+> Built by Kael with the help of Claude, an AI model by Anthropic. The ideas, testing and decisions are mine; much of the code was written with Claude. Everything is tested in game with friends.
