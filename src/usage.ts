@@ -57,3 +57,47 @@ export function percentages(u: Usage) {
     rowsWritten: (u.rowsWritten / FREE_LIMITS.rowsWritten) * 100,
   };
 }
+
+export interface Health {
+  requests: number;
+  errors: number;
+  /** CPU time per request in milliseconds; the Workers Free limit is 10 ms. */
+  cpuP50: number;
+  cpuP99: number;
+}
+
+const HEALTH_QUERY = `query Health($acct: String!, $start: Time!, $end: Time!, $script: String!) {
+  viewer {
+    accounts(filter: { accountTag: $acct }) {
+      workersInvocationsAdaptive(limit: 10000, filter: { datetime_geq: $start, datetime_lt: $end, scriptName: $script }) {
+        sum { requests errors }
+        quantiles { cpuTimeP50 cpuTimeP99 }
+      }
+    }
+  }
+}`;
+
+/** Today's requests, errors and CPU time for one Worker. Used by the owner's admin tool only. */
+export async function fetchHealth(accountId: string, token: string, script: string, at = new Date()): Promise<Health> {
+  const date = at.toISOString().slice(0, 10);
+  const start = date + "T00:00:00Z";
+  const end = new Date(Date.parse(start) + 86_400_000).toISOString();
+  const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+    method: "POST",
+    headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+    body: JSON.stringify({ query: HEALTH_QUERY, variables: { acct: accountId, start, end, script } }),
+  });
+  if (!res.ok) throw new Error("analytics http " + res.status);
+  const body = (await res.json()) as any;
+  if (body.errors?.length) throw new Error("analytics: " + String(body.errors[0]?.message).slice(0, 200));
+  const rows: any[] = body.data?.viewer?.accounts?.[0]?.workersInvocationsAdaptive ?? [];
+  let requests = 0, errors = 0, p50 = 0, p99 = 0;
+  for (const r of rows) {
+    requests += Number(r?.sum?.requests ?? 0);
+    errors += Number(r?.sum?.errors ?? 0);
+    // Quantiles come per group; the worst group is the honest number.
+    p50 = Math.max(p50, Number(r?.quantiles?.cpuTimeP50 ?? 0));
+    p99 = Math.max(p99, Number(r?.quantiles?.cpuTimeP99 ?? 0));
+  }
+  return { requests, errors, cpuP50: p50 / 1000, cpuP99: p99 / 1000 };
+}

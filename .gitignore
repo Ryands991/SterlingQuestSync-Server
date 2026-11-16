@@ -7,3 +7,4 @@ wrangler.toml
 deploy.cmd
 set-secrets.cmd
 push-to-github.cmd
+backups/

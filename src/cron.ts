@@ -80,11 +80,19 @@ export async function usageCheck(env: Env): Promise<void> {
   await env.DB.prepare("INSERT OR IGNORE INTO settings (k, v) VALUES (?1, '1')").bind(flag).run();
 }
 
+/** Heartbeat for the owner's admin tool: when the hourly job and the daily cleanup last ran. */
+async function mark(env: Env, k: string, t = now()): Promise<void> {
+  await env.DB.prepare("INSERT INTO settings (k, v) VALUES (?1, ?2) ON CONFLICT (k) DO UPDATE SET v = excluded.v")
+    .bind(k, String(t)).run();
+}
+
 export async function scheduled(_c: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
   ctx.waitUntil(
     usageCheck(env).catch((e) => console.error("usage check failed", e instanceof Error ? e.message.slice(0, 200) : "")),
   );
+  await mark(env, "cron:last");
   if (new Date().getUTCHours() === CLEANUP_HOUR_UTC) {
     await cleanup(env);
+    await mark(env, "cleanup:last");
   }
 }

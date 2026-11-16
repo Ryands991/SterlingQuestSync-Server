@@ -22,7 +22,7 @@ Related: [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQues
 - **Data only flows through a pairing.** One friend makes a pairing code, the other redeems it. Codes are random, single use, expire in 24 hours, and are rate limited. Nobody can send a request to a stranger, and listing a character's GUID grants nothing.
 - **Newest save wins.** Uploads carry the game's server time from the save, and the server refuses older ones.
 - **Strict input.** Copies must match `^[A-Za-z0-9()]+$` and stay under 64 KB. Every query uses bound parameters. There are no listing endpoints.
-- **No admin API.** Owner jobs run through Wrangler on the owner's own machine, behind their Cloudflare login.
+- **No admin API.** Owner jobs run in Sterling Admin, a separate tool in this repo that runs only on the owner's PC, through Wrangler and their Cloudflare login (or a token limited to D1 and analytics). The Sterling Quest Sync app has no owner code. See [SETUP.md](SETUP.md#5-owner-jobs-sterling-admin).
 - **The trust we accept:** pair signing keys pass through the server, so whoever runs a server could forge partner progress. It can't run code in anyone's game or touch a character.
 
 The `test/attacks.test.ts` file is the bad-actor suite: every attack in it must fail, and it runs with every change.

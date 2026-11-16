@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sterling Admin</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="titlebar"><span class="name">Sterling Admin</span><span class="tag">OWNER ONLY</span></header>
+<div class="app">
+  <nav class="side" aria-label="Main">
+    <button type="button" data-page="overview">Overview</button>
+    <button type="button" data-page="accounts">Accounts</button>
+    <button type="button" data-page="signups">Sign-ups</button>
+    <div class="foot"><span id="srv-url"></span><br><span id="sign-in"></span></div>
+  </nav>
+
+  <main class="page" id="page-overview">
+    <div class="pagehead"><h1>Overview</h1><button type="button" class="btn" id="ov-refresh">Refresh</button></div>
+    <div id="ov-loading" class="card muted">Loading... Wrangler takes a few seconds.</div>
+    <div id="ov" hidden class="col">
+      <div id="warns" class="col"></div>
+      <div class="grid3">
+        <div class="card stat framed"><div class="v" id="s-accounts"></div><div class="l">Accounts</div></div>
+        <div class="card stat"><div class="v" id="s-active"></div><div class="l">Active today</div></div>
+        <div class="card stat"><div class="v" id="s-pairings"></div><div class="l">Live pairings</div></div>
+      </div>
+      <section class="card"><h2>Server</h2><div id="server-rows" class="kvs"></div></section>
+      <section class="card"><h2>Cloudflare today <span class="small muted">(free plan, resets at 00:00 UTC)</span></h2><div id="meters"></div><div id="health" class="kvs"></div><div id="notes" class="small muted"></div></section>
+      <div class="grid2">
+        <section class="card"><h2>Sign-ups</h2><div id="signup-rows" class="kvs"></div></section>
+        <section class="card"><h2>Next daily cleanup</h2><div id="cleanup-rows" class="kvs"></div></section>
+      </div>
+      <section class="card row-between">
+        <div><h2>Back up the database</h2><div class="small muted">Saves a full copy to <b>Sterling Admin Backups</b> in your user folder, outside the Claude folder. It holds everyone's data: keep it private. Cloudflare also keeps 7 days of restore points.</div></div>
+        <div class="row"><button type="button" class="btn" id="open-backups">Open folder</button><button type="button" class="btn primary" id="backup">Back up now</button></div>
+      </section>
+    </div>
+  </main>
+
+  <main class="page" id="page-accounts" hidden>
+    <div class="pagehead"><div><h1>Accounts</h1><div class="small muted">Newest activity first, up to 200. Names are what each account listed.</div></div><button type="button" class="btn" id="ac-refresh">Refresh</button></div>
+    <section class="card tablecard"><table><thead><tr><th>CHARACTERS</th><th>ACCOUNT</th><th>PAIRS</th><th>PCS</th><th>LAST SEEN</th><th><span class="sr">Actions</span></th></tr></thead><tbody id="ac-rows"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody></table></section>
+  </main>
+
+  <main class="page" id="page-signups" hidden>
+    <h1>Sign-ups</h1>
+    <section class="card framed">
+      <div class="row-between"><div><h2>Open sign-up</h2><div class="small muted">Anyone with the app can make an account. Turn it off to require an invite from an existing user (the emergency brake).</div></div><span class="pill" id="su-pill">...</span></div>
+      <div class="row gap-top"><button type="button" class="btn primary" id="su-toggle" disabled>...</button></div>
+    </section>
+    <section class="card small muted">Existing accounts and pairings keep working either way. In invite mode, any user can make a 24 hour invite code in their app.</section>
+  </main>
+</div>
+
+<div class="scrim" id="scrim" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title"><h1 id="dlg-title"></h1><div id="dlg-body" class="col"></div><div class="row end" id="dlg-btns"></div></div></div>
+<div class="toast" id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
