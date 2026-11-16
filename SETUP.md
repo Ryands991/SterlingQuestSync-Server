@@ -56,6 +56,15 @@ npx wrangler deploy
 
 The server checks usage every hour and emails once a day if anything passes `USAGE_ALERT_PCT` (60% by default).
 
+## 4b. Recommended: a rate limiting rule
+
+The free plan stops at 100,000 requests a day, and anyone can send that many. The server's own limits protect the database, but only a rule at Cloudflare's edge protects the request count:
+
+1. In the Cloudflare dashboard, open your domain, then **Security > Security rules > Create rule > Rate limiting rule**.
+2. Expression: `(http.host eq "sync.example.com")` with your own address.
+3. Same IP, more than **50 requests per 10 seconds**, action **Block** for 10 seconds. (The free plan allows one rule with 10-second windows; a normal sync is far below this.)
+4. Deploy.
+
 ## 5. Owner jobs: Sterling Admin
 
 Owner jobs are a separate tool that lives in this server folder. They are not part of the Sterling Quest Sync app, and the public app has no owner code at all.

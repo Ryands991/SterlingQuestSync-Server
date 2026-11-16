@@ -10,22 +10,25 @@ Sterling began as a little project for me and a few close friends, so we could k
 
 ## What this is
 
-Sterling Quest Tracker already syncs quest progress live between friends who are online together. This server covers the rest: when your play times don't overlap, the Sterling Quest Sync app (coming soon) uploads your latest copy when you log off, and your friend's app picks it up before they log in.
+Sterling Quest Tracker already syncs quest progress live between friends who are online together. This server covers the rest: when your play times don't overlap, the [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App) uploads your latest copy when you log off, and your friend's app picks it up before they log in.
 
 It's one Cloudflare Worker and one D1 database. The server is a mailbox: it keeps the latest full copy per character and partner, checks who may read what, and numbers every upload. It never runs anything in the game, and it treats the copies it carries as opaque.
 
-Related: [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQuest) · Sterling Quest Sync app (coming soon)
+Related: [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQuest) · [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App)
 
 ## How it stays safe
 
 - **Who you are comes only from your key.** The app makes a random 256-bit key on each PC. The server stores only its SHA-256.
 - **Data only flows through a pairing.** One friend makes a pairing code, the other redeems it. Codes are random, single use, expire in 24 hours, and are rate limited. Nobody can send a request to a stranger, and listing a character's GUID grants nothing.
 - **Newest save wins.** Uploads carry the game's server time from the save, and the server refuses older ones.
+- **Fair use for everyone.** Each account can save up to 1,000 uploads a day, a save can't be dated more than a day ahead, and every request is rate limited per address and per key. The public server also has a Cloudflare rate limiting rule in front of it.
 - **Strict input.** Copies must match `^[A-Za-z0-9()]+$` and stay under 64 KB. Every query uses bound parameters. There are no listing endpoints.
 - **No admin API.** Owner jobs run in Sterling Admin, a separate tool in this repo that runs only on the owner's PC, through Wrangler and their Cloudflare login (or a token limited to D1 and analytics). The Sterling Quest Sync app has no owner code. See [SETUP.md](SETUP.md#5-owner-jobs-sterling-admin).
 - **The trust we accept:** pair signing keys pass through the server, so whoever runs a server could forge partner progress. It can't run code in anyone's game or touch a character.
 
-The `test/attacks.test.ts` file is the bad-actor suite: every attack in it must fail, and it runs with every change.
+`test/attacks.test.ts` is the bad-actor suite and `test/audit.test.ts` holds the findings of the November 2026 security audit. Every attack in them must fail, and they run with every change.
+
+Found a security problem? Please report it privately through the app repo's [security page](https://github.com/SterlingAddons/SterlingQuestSync-App/security/advisories/new) or email support@sterlingaddons.com.
 
 ## Privacy
 
