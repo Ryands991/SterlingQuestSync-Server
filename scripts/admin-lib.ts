@@ -47,6 +47,8 @@ export function signIn(): "token" | "login" {
 
 function wranglerEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, WRANGLER_SEND_METRICS: "false" };
+  // Wrangler reads CF_* as old spellings of its own settings and warns about them, so it never sees ours.
+  for (const k of ["CF_ACCOUNT_ID", "CF_API_TOKEN", "CF_D1_TOKEN"]) delete env[k];
   if (signIn() === "token") {
     env.CLOUDFLARE_API_TOKEN = process.env.CF_D1_TOKEN;
     env.CLOUDFLARE_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
@@ -63,9 +65,12 @@ function target(exporting = false): string[] {
 
 /** The line of Wrangler's output that says what went wrong, without colour codes. */
 function wranglerError(text: string): string {
-  const lines = text.replace(/\x1b\[[0-9;]*m/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
-  const e = lines.find((l) => /ERROR|✘/.test(l)) || lines.find((l) => !/WARNING|▲|Logs were written/.test(l));
-  return (e || "Wrangler failed.").replace(/^✘\s*\[ERROR\]\s*/, "");
+  const lines = text.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // Warnings are never the reason it failed: skip them and everything that belongs to them.
+  const useful = lines.filter((l) => !/^▲|\[WARNING\]|deprecated|Logs were written|^🪵|^-+$/i.test(l));
+  const i = useful.findIndex((l) => /ERROR|✘/.test(l));
+  const pick = i >= 0 ? useful.slice(i, i + 3) : useful.slice(-2);
+  return (pick.join(" ").replace(/✘\s*\[ERROR\]\s*/g, "") || "Wrangler failed.").slice(0, 400);
 }
 
 export async function d1(sql: string): Promise<any[]> {
