@@ -25,6 +25,7 @@ const FILES: Record<string, [string, string]> = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/style.css": ["style.css", "text/css; charset=utf-8"],
+  "/icon.png": ["icon.png", "image/png"],
   "/fonts/spectral-sc-latin-600-normal.woff2": ["fonts/spectral-sc-latin-600-normal.woff2", "font/woff2"],
   "/fonts/source-sans-3-latin-400-normal.woff2": ["fonts/source-sans-3-latin-400-normal.woff2", "font/woff2"],
   "/fonts/source-sans-3-latin-600-normal.woff2": ["fonts/source-sans-3-latin-600-normal.woff2", "font/woff2"],

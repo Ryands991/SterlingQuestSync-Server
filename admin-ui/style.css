@@ -80,3 +80,4 @@ td:last-child { text-align: right; white-space: nowrap; }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); max-width: 80%; padding: 10px 16px; background: var(--raised); border: 1px solid var(--brass); border-radius: 4px; z-index: 20; }
 .toast.bad { border-color: var(--bad-line); color: var(--bad); }
 .gap-top { margin-top: 14px; }
+.titlebar .logo { width: 20px; height: 20px; }
