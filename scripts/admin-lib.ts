@@ -63,6 +63,20 @@ function target(exporting = false): string[] {
   return ["--remote"];
 }
 
+/** Wrangler's --json answer, even when it prints a banner or notes around it. undefined if there is none. */
+function parseWranglerJson(raw: string): any {
+  const text = raw.replace(/\x1b\[[0-9;]*m/g, "");
+  try { return JSON.parse(text); } catch { /* look for the JSON part */ }
+  for (let i = text.indexOf("["); i >= 0; i = text.indexOf("[", i + 1)) {
+    const end = text.lastIndexOf("]");
+    if (end <= i) break;
+    try { return JSON.parse(text.slice(i, end + 1)); } catch { /* try the next bracket */ }
+  }
+  const a = text.indexOf("{"), b = text.lastIndexOf("}");
+  if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b + 1)); } catch { /* none */ } }
+  return undefined;
+}
+
 /** The line of Wrangler's output that says what went wrong, without colour codes. */
 function wranglerError(text: string): string {
   const lines = text.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -119,13 +133,16 @@ export function d1Sets(sql: string): Promise<any[][]> {
           : "";
         return reject(new AdminError(wranglerError(text) + hint));
       }
-      try {
-        const parsed = JSON.parse(out);
-        const sets = Array.isArray(parsed) ? parsed : [parsed];
-        resolve(sets.map((s: any) => s.results ?? []));
-      } catch {
-        reject(new AdminError("Couldn't read Wrangler's answer."));
+      const parsed = parseWranglerJson(out);
+      if (parsed === undefined) {
+        const hint = out.replace(/\x1b\[[0-9;]*m/g, "").trim().split(/\r?\n/).filter((l) => l.trim()).slice(0, 2).join(" ").slice(0, 200);
+        return reject(new AdminError("Couldn't read Wrangler's answer" + (hint ? ": " + hint : ".")));
       }
+      const sets = Array.isArray(parsed) ? parsed : [parsed];
+      if (sets.some((x: any) => x && x.success === false)) {
+        return reject(new AdminError("The database refused the query: " + JSON.stringify(sets.find((x: any) => x?.success === false)?.errors ?? "").slice(0, 200)));
+      }
+      resolve(sets.map((x: any) => x?.results ?? []));
     });
   });
 }
