@@ -13,6 +13,8 @@ export const MAX_KEYS = 10;                  // PCs per account
 export const MAX_PACKET = 64 * 1024;         // characters
 export const MAX_BODY = MAX_PACKET + 4096;
 export const INBOX_LIMIT = 20;
+export const MAX_UPLOADS_PER_DAY = 1000;     // saved uploads per account per UTC day
+export const MAX_CLOCK_AHEAD = DAY;          // a save can't claim to be from further in the future
 
 export class HttpError extends Error {
   constructor(public status: number, public code: string) {
@@ -110,10 +112,44 @@ export function id(v: unknown): string {
   return v;
 }
 
+/** Reads the body, stopping as soon as it passes the cap (a missing or false Content-Length can't get around it). */
+async function readCapped(req: Request): Promise<string> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY * 4) {            // 4 bytes per character at most
+      await reader.cancel();
+      fail(413, "too_large");
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
+
+/** A path part, percent-decoded. Broken escapes are plain bad input, not a server error. */
+export function pathPart(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    fail(400, "bad_path");
+  }
+}
+
 export async function readJson(req: Request): Promise<Record<string, unknown>> {
   const len = Number(req.headers.get("content-length") || "0");
   if (len > MAX_BODY) fail(413, "too_large");
-  const text = await req.text();
+  const text = await readCapped(req);
   if (text.length > MAX_BODY) fail(413, "too_large");
   if (text === "") return {};
   try {

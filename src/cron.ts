@@ -33,6 +33,8 @@ export async function cleanup(env: Env, t = now()): Promise<void> {
     env.DB.prepare("DELETE FROM pair_codes WHERE expires_at < ?1").bind(t),
     env.DB.prepare("DELETE FROM link_codes WHERE expires_at < ?1").bind(t),
     env.DB.prepare("DELETE FROM invites WHERE expires_at < ?1").bind(t),
+    // Daily upload counters from before yesterday (keys are "up:<day>:<account>").
+    env.DB.prepare("DELETE FROM counters WHERE k LIKE 'up:%' AND k < ?1").bind("up:" + (Math.floor(t / DAY) - 1) + ":"),
     env.DB.prepare("DELETE FROM settings WHERE k LIKE 'alerted:%' AND k < ?1")
       .bind("alerted:" + new Date((t - 2 * DAY) * 1000).toISOString().slice(0, 10)),
   ]);

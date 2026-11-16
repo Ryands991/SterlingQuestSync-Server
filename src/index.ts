@@ -3,7 +3,7 @@
 
 import {
   API_VERSION, MIN_APP_VERSION, DAY, PAIR_CODE_TTL, LINK_CODE_TTL, INVITE_TTL,
-  MAX_PARTNERS, MAX_CHARACTERS, MAX_KEYS, MAX_PACKET, INBOX_LIMIT,
+  MAX_PARTNERS, MAX_CHARACTERS, MAX_KEYS, MAX_PACKET, INBOX_LIMIT, MAX_UPLOADS_PER_DAY, MAX_CLOCK_AHEAD, pathPart,
   HttpError, json, fail, now, randomHex, randomCode, groupCode, normalizeCode, sha256,
   RE_NAME, RE_REALM, RE_PACKET, guid, label, id, readJson, bearer,
 } from "./util";
@@ -42,6 +42,8 @@ function ip(req: Request): string {
 
 async function authenticate(req: Request, env: Env): Promise<Auth> {
   const key = bearer(req);
+  // Per address first, so a flood of made-up keys is stopped before it costs database reads.
+  await limit(env.RL_API, "ip:" + ip(req));
   const hash = await sha256(key);
   const row = await env.DB.prepare(
     "SELECT k.id AS key_id, k.last_seen AS seen, a.id AS account, a.banned AS banned " +
@@ -134,7 +136,11 @@ async function createAccount(req: Request, env: Env): Promise<Response> {
     ).bind(account, t, rec.hash, invitedBy),
     k.stmt,
   ];
-  if (inviteHash) stmts.push(env.DB.prepare("DELETE FROM invites WHERE hash = ?1").bind(inviteHash));
+  if (inviteHash) {
+    // Take the invite first: if two sign-ups race for one invite, only one gets it.
+    const took = await env.DB.prepare("DELETE FROM invites WHERE hash = ?1").bind(inviteHash).run();
+    if (!took.meta.changes) fail(403, "invite_required");
+  }
   await env.DB.batch(stmts);
   return json({ account_id: account, key_id: k.kid, recovery_code: rec.code }, 201);
 }
@@ -236,7 +242,10 @@ async function redeemLinkCode(req: Request, env: Env): Promise<Response> {
   if (!row) fail(404, "not_found");
   if ((await keyCount(env, row.account_id)) >= MAX_KEYS) fail(409, "too_many_pcs");
   const k = await insertKeyStmt(env, row.account_id, key, label(body.label), t);
-  await env.DB.batch([k.stmt, env.DB.prepare("DELETE FROM link_codes WHERE hash = ?1").bind(hash)]);
+  // Take the code first: if two PCs race for one code, only one gets it.
+  const took = await env.DB.prepare("DELETE FROM link_codes WHERE hash = ?1").bind(hash).run();
+  if (!took.meta.changes) fail(404, "not_found");
+  await env.DB.batch([k.stmt]);
   return json({ account_id: row.account_id, key_id: k.kid });
 }
 
@@ -385,6 +394,9 @@ async function redeemPairCode(req: Request, env: Env, a: Auth): Promise<Response
   if ((await activePartners(env, row.account_id, row.guid)) >= MAX_PARTNERS) fail(409, "partner_limit");
   const t = now();
   const pid = randomHex(8);
+  // Take the code first: if two accounts race for one code, only one gets the pairing.
+  const took = await env.DB.prepare("DELETE FROM pair_codes WHERE hash = ?1").bind(row.hash).run();
+  if (!took.meta.changes) fail(404, "not_found");
   const stmts = ex.others.map((p) =>
     env.DB.prepare("UPDATE pairings SET ended_at = ?2, ended_reason = 'replaced' WHERE id = ?1 AND ended_at IS NULL").bind(p.id, t),
   );
@@ -393,7 +405,6 @@ async function redeemPairCode(req: Request, env: Env, a: Auth): Promise<Response
       "INSERT INTO pairings (id, a_account, a_guid, a_name, a_realm, a_key, b_account, b_guid, b_name, b_realm, b_key, created_at) " +
         "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
     ).bind(pid, row.account_id, row.guid, row.name, row.realm, randomCode(16), a.account, g, me.name, me.realm, randomCode(16), t),
-    env.DB.prepare("DELETE FROM pair_codes WHERE hash = ?1").bind(row.hash),
     env.DB.prepare("UPDATE accounts SET ever_paired = 1 WHERE id IN (?1, ?2)").bind(a.account, row.account_id),
   );
   await env.DB.batch(stmts);
@@ -441,6 +452,8 @@ async function putSlot(req: Request, env: Env, a: Auth, from: string, to: string
   if (!RE_PACKET.test(packet)) fail(400, "bad_packet");
   if (typeof gameTime !== "number" || !Number.isInteger(gameTime) || gameTime < 1_000_000_000 || gameTime > 4_000_000_000) fail(400, "bad_game_time");
   if (typeof proto !== "number" || !Number.isInteger(proto) || proto < 1 || proto > 10_000) fail(400, "bad_proto");
+  // A save stamped far in the future would block every later real save for that slot.
+  if (gameTime > now() + MAX_CLOCK_AHEAD) fail(400, "bad_game_time");
 
   if (from === to) {
     await myCharacter(env, a.account, from); // self slot: only your own listed character
@@ -460,7 +473,12 @@ async function putSlot(req: Request, env: Env, a: Auth, from: string, to: string
   if (cur && cur.game_time === gameTime && cur.same) return json({ seq: cur.seq, unchanged: true });
 
   const t = now();
+  // Daily cap per account, so one account can't use up the whole server's daily write allowance.
+  const dayKey = "up:" + Math.floor(t / DAY) + ":" + a.account;
+  const used = await env.DB.prepare("SELECT v FROM counters WHERE k = ?1").bind(dayKey).first<{ v: number }>();
+  if ((used?.v ?? 0) >= MAX_UPLOADS_PER_DAY) fail(429, "daily_limit");
   const res = await env.DB.batch([
+    env.DB.prepare("INSERT INTO counters (k, v) VALUES (?1, 1) ON CONFLICT (k) DO UPDATE SET v = v + 1").bind(dayKey),
     env.DB.prepare("UPDATE counters SET v = v + 1 WHERE k = 'seq'"),
     env.DB.prepare(
       "INSERT INTO slots (account_id, from_guid, to_guid, packet, game_time, proto, seq, updated_at) " +
@@ -470,7 +488,7 @@ async function putSlot(req: Request, env: Env, a: Auth, from: string, to: string
     ).bind(a.account, from, to, packet, gameTime, proto, t),
     env.DB.prepare("SELECT seq, game_time FROM slots WHERE account_id = ?1 AND from_guid = ?2 AND to_guid = ?3").bind(a.account, from, to),
   ]);
-  const saved = res[2].results[0] as { seq: number; game_time: number };
+  const saved = res[3].results[0] as { seq: number; game_time: number };
   if (saved.game_time !== gameTime) return json({ error: "stale", seq: saved.seq, game_time: saved.game_time }, 409);
   return json({ seq: saved.seq }, 201);
 }
@@ -515,8 +533,8 @@ const authed: [string, RegExp, AuthHandler][] = [
   ["DELETE", /^\/v1\/keys\/([^/]+)$/, (_r, env, a, m) => removeKey(env, a, m[1])],
   ["POST", /^\/v1\/link-codes$/, (_r, env, a) => makeLinkCode(env, a)],
   ["POST", /^\/v1\/invites$/, (_r, env, a) => makeInvite(env, a)],
-  ["PUT", /^\/v1\/characters\/([^/]+)$/, (r, env, a, m) => putCharacter(r, env, a, decodeURIComponent(m[1]))],
-  ["DELETE", /^\/v1\/characters\/([^/]+)$/, (_r, env, a, m) => deleteCharacter(env, a, decodeURIComponent(m[1]))],
+  ["PUT", /^\/v1\/characters\/([^/]+)$/, (r, env, a, m) => putCharacter(r, env, a, pathPart(m[1]))],
+  ["DELETE", /^\/v1\/characters\/([^/]+)$/, (_r, env, a, m) => deleteCharacter(env, a, pathPart(m[1]))],
   ["POST", /^\/v1\/pair-codes$/, (r, env, a) => makePairCode(r, env, a)],
   ["GET", /^\/v1\/pair-codes$/, (_r, env, a) => listPairCodes(env, a)],
   ["DELETE", /^\/v1\/pair-codes\/([^/]+)$/, (_r, env, a, m) => cancelPairCode(env, a, m[1])],
@@ -524,7 +542,7 @@ const authed: [string, RegExp, AuthHandler][] = [
   ["POST", /^\/v1\/pair-codes\/redeem$/, (r, env, a) => redeemPairCode(r, env, a)],
   ["GET", /^\/v1\/pairings$/, (_r, env, a) => listPairings(env, a)],
   ["DELETE", /^\/v1\/pairings\/([^/]+)$/, (_r, env, a, m) => endPairing(env, a, m[1])],
-  ["PUT", /^\/v1\/slots\/([^/]+)\/([^/]+)$/, (r, env, a, m) => putSlot(r, env, a, decodeURIComponent(m[1]), decodeURIComponent(m[2]))],
+  ["PUT", /^\/v1\/slots\/([^/]+)\/([^/]+)$/, (r, env, a, m) => putSlot(r, env, a, pathPart(m[1]), pathPart(m[2]))],
   ["GET", /^\/v1\/inbox$/, (r, env, a) => inbox(r, env, a)],
 ];
 
