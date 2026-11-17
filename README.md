@@ -10,7 +10,7 @@
 
 ## What this is
 
-Sterling Quest Tracker already syncs quest progress live between friends who are online together. This server covers the rest: when your play times don't overlap, the [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App) uploads your latest copy when you log off, and your friend's app picks it up before they log in.
+Sterling Quest Tracker already syncs quest progress live between friends who are online together. This server covers the rest: when your play times don't overlap, the [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App) shares your progress each time the game saves (when you log out or /reload), and your friend's app picks it up before they log in.
 
 It's one Cloudflare Worker and one D1 database. The server is a mailbox: it keeps the latest full copy per character and partner, checks who may read what, and numbers every upload. It never runs anything in the game, and it treats the copies it carries as opaque.
 
@@ -19,7 +19,7 @@ Related: [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQues
 ## How it stays safe
 
 - **Who you are comes only from your key.** The app makes a random 256-bit key on each PC. The server stores only its SHA-256.
-- **Data only flows through a pairing.** One friend makes a pairing code, the other redeems it. Codes are random, single use, expire in 24 hours, and are rate limited. Nobody can send a request to a stranger, and listing a character's GUID grants nothing.
+- **Data only flows through a pairing.** One friend's app makes a pairing code, the other redeems it (typed in by hand, or passed between the two apps through Sterling in game when they're already partners there). Codes are random, single use, expire in 24 hours, and are rate limited. Nobody can send a request to a stranger, and listing a character's GUID grants nothing.
 - **Newest save wins.** Uploads carry the game's server time from the save, and the server refuses older ones.
 - **Fair use for everyone.** Each account can save up to 1,000 uploads a day, a save can't be dated more than a day ahead, and every request is rate limited per address and per key. The public server also has a Cloudflare rate limiting rule in front of it.
 - **Strict input.** Copies must match `^[A-Za-z0-9()]+$` and stay under 64 KB. Every query uses bound parameters. There are no listing endpoints.
