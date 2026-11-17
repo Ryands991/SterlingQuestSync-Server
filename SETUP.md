@@ -30,6 +30,8 @@ Then create the tables:
 npx wrangler d1 migrations apply sterling-quest-sync --remote
 ```
 
+Run the same command again after updating the server code: new versions can add database changes (in `migrations/`), and they must be applied before the new code is deployed.
+
 ## 3. Deploy
 
 ```sh
@@ -71,12 +73,13 @@ Owner jobs are a separate tool that lives in this server folder. They are not pa
 
 **The window.** Double-click `Sterling Admin.cmd` (or run `npm run admin-ui`). It opens a small window with:
 
-- **Overview:** what needs attention (with what to do), server status and response time, today's Cloudflare usage against the free limits, errors and CPU time per request, when the hourly job and daily cleanup last ran, new sign-ups, and what the next cleanup will remove.
+- **Overview:** what needs attention (with what to do), installs (PCs with the app, how many were used lately, and which app versions they run), server status and response time, today's Cloudflare usage against the free limits, errors and CPU time per request, when the hourly job and daily cleanup last ran, new sign-ups, and what the next cleanup will remove.
 - **Accounts:** every account with its characters, pairings and PCs, with Ban and Unban.
 - **Sign-ups:** open sign-up, or invite-only (the emergency brake).
+- **Notices:** a short banner on the Companion app's Home page (app 0.1.25 and newer), for the app versions you pick, in gold, amber or red, with an optional button to one of your own pages and an end date. Use it for things like "manual update needed" or planned maintenance.
 - **Back up now:** saves a full copy of the database to `Sterling Admin Backups` in your user folder. It holds everyone's data, so keep it private and outside any synced or shared folder.
 
-How it stays safe: it listens only on `127.0.0.1` with a random port and a random key for each launch, checks the Host and Origin of every request, offers only fixed jobs (no free text), and stops on its own about a minute after the window closes.
+How it stays safe: it listens only on `127.0.0.1` with a random port and a random key for each launch, checks the Host and Origin of every request, offers only fixed jobs (the only free text is a notice's, which is checked with the server's own rules and stored without touching the SQL), and stops on its own about a minute after the window closes.
 
 **Sign-in.** By default it uses your `wrangler login`, which can manage your whole Cloudflare account. Tighter: make an API token with only **D1: Edit** and **Account Analytics: Read**, for your one account, then double-click `set-admin-token.cmd` and paste it. It's saved to `%USERPROFILE%\.sterling-admin\admin.env`, outside this repo. (Cloudflare can't limit a token to a single D1 database yet, so it covers every D1 database on that account.) You still need `wrangler login` to deploy.
 

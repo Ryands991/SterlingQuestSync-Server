@@ -8,6 +8,7 @@ import {
   RE_NAME, RE_REALM, RE_PACKET, guid, label, id, readJson, bearer,
 } from "./util";
 import { scheduled } from "./cron";
+import { activeNotices } from "./notices";
 
 export interface Env {
   DB: D1Database;
@@ -36,6 +37,12 @@ async function limit(rl: RateLimit | undefined, key: string): Promise<void> {
   if (!success) fail(429, "rate_limited");
 }
 
+/** The Companion app's version from its User-Agent ("SterlingQuestSync/0.1.25"), or null. */
+function appVersion(req: Request): string | null {
+  const m = /^SterlingQuestSync\/(\d{1,4}\.\d{1,4}\.\d{1,4})$/.exec(req.headers.get("user-agent") || "");
+  return m ? m[1] : null;
+}
+
 function ip(req: Request): string {
   return req.headers.get("cf-connecting-ip") || "unknown";
 }
@@ -46,19 +53,23 @@ async function authenticate(req: Request, env: Env): Promise<Auth> {
   await limit(env.RL_API, "ip:" + ip(req));
   const hash = await sha256(key);
   const row = await env.DB.prepare(
-    "SELECT k.id AS key_id, k.last_seen AS seen, a.id AS account, a.banned AS banned " +
+    "SELECT k.id AS key_id, k.last_seen AS seen, k.app_version AS ver, a.id AS account, a.banned AS banned " +
       "FROM keys k JOIN accounts a ON a.id = k.account_id WHERE k.hash = ?1",
-  ).bind(hash).first<{ key_id: string; seen: number; account: string; banned: number }>();
+  ).bind(hash).first<{ key_id: string; seen: number; ver: string | null; account: string; banned: number }>();
   if (!row) fail(401, "unknown_key");
   if (row.banned) fail(403, "banned");
   await limit(env.RL_API, "k:" + hash.slice(0, 32));
   const t = now();
-  // Writes are the scarce resource on the free plan, so "last seen" moves at most once a day.
+  const ver = appVersion(req);
+  // Writes are the scarce resource on the free plan, so "last seen" moves at most once a day,
+  // and the app version is only written when it changed (after an update).
   if (row.seen < t - DAY) {
     await env.DB.batch([
-      env.DB.prepare("UPDATE keys SET last_seen = ?1 WHERE hash = ?2").bind(t, hash),
+      env.DB.prepare("UPDATE keys SET last_seen = ?1, app_version = COALESCE(?3, app_version) WHERE hash = ?2").bind(t, hash, ver),
       env.DB.prepare("UPDATE accounts SET last_seen = ?1 WHERE id = ?2").bind(t, row.account),
     ]);
+  } else if (ver && ver !== row.ver) {
+    await env.DB.prepare("UPDATE keys SET app_version = ?1 WHERE hash = ?2").bind(ver, hash).run();
   }
   return { account: row.account, keyHash: hash, keyId: row.key_id };
 }
@@ -514,13 +525,25 @@ async function inbox(req: Request, env: Env, a: Auth): Promise<Response> {
   return json({ packets, next: last, more });
 }
 
+// Open to everyone: versions, sign-up mode and the owner's notices, in one database read.
+async function meta(env: Env): Promise<Response> {
+  const r = await env.DB.prepare("SELECT k, v FROM settings WHERE k IN ('signups', 'notices')").all<{ k: string; v: string }>();
+  const get = (k: string) => r.results.find((x) => x.k === k)?.v ?? null;
+  return json({
+    api: API_VERSION,
+    min_app: MIN_APP_VERSION,
+    signups: get("signups") === "invite" ? "invite" : "open",
+    notices: activeNotices(get("notices"), now()),
+  });
+}
+
 // ---------------------------------------------------------------- router
 
 type Handler = (req: Request, env: Env, m: RegExpMatchArray) => Promise<Response>;
 type AuthHandler = (req: Request, env: Env, a: Auth, m: RegExpMatchArray) => Promise<Response>;
 
 const open: [string, RegExp, Handler][] = [
-  ["GET", /^\/v1\/meta$/, async (_r, env) => json({ api: API_VERSION, min_app: MIN_APP_VERSION, signups: await signups(env) })],
+  ["GET", /^\/v1\/meta$/, (_r, env) => meta(env)],
   ["POST", /^\/v1\/accounts$/, (r, env) => createAccount(r, env)],
   ["POST", /^\/v1\/recover$/, (r, env) => recover(r, env)],
   ["POST", /^\/v1\/link-codes\/redeem$/, (r, env) => redeemLinkCode(r, env)],

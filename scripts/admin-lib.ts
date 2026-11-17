@@ -1,6 +1,7 @@
 // Owner jobs, shared by the command line (admin.ts) and the Sterling Admin window (admin-ui.ts).
 // They run on the owner's PC through Wrangler, signed in to Cloudflare with 2FA. There is no admin
-// route on the server: these talk to D1 directly with fixed SQL. Nothing here takes free text.
+// route on the server: these talk to D1 directly with fixed SQL. The only free text is a notice's,
+// which is checked with the server's own rules and written as a hex literal (see saveNotices).
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,7 @@ import { homedir } from "node:os";
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fetchUsage, fetchHealth, percentages, FREE_LIMITS } from "../src/usage";
+import { parseNotices, checkNotice, MAX_NOTICES, type Notice } from "../src/notices";
 
 export const ID = /^[0-9a-f]{16}$/;
 
@@ -203,6 +205,56 @@ export async function signups(mode: string): Promise<string> {
   return mode === "on" ? "Sign-ups are open." : "Sign-ups are closed. New accounts now need an invite from an existing user.";
 }
 
+// ---------------------------------------------------------------- notices
+// The one place free text goes into the database. It's checked with the server's own rules, then
+// written as a hex literal, so nothing typed can ever change the SQL around it.
+
+export async function notices(): Promise<Notice[]> {
+  const [r] = await d1(`SELECT v FROM settings WHERE k = 'notices';`);
+  return parseNotices(r ? String(r.v) : null);
+}
+
+async function saveNotices(list: Notice[]): Promise<void> {
+  const hex = Buffer.from(JSON.stringify(list), "utf8").toString("hex");
+  if (!/^[0-9a-f]*$/.test(hex)) throw new AdminError("Couldn't encode the notices.");
+  await d1(`INSERT INTO settings (k, v) VALUES ('notices', CAST(X'${hex}' AS TEXT)) ON CONFLICT (k) DO UPDATE SET v = excluded.v;`);
+}
+
+export async function addNotice(fields: Record<string, unknown>): Promise<string> {
+  const list = await notices();
+  const now = Math.floor(Date.now() / 1000);
+  const live = list.filter((n) => n.until == null || n.until > now);
+  if (live.length >= MAX_NOTICES) throw new AdminError(`There can be up to ${MAX_NOTICES} notices. Remove one first.`);
+  const id = (now.toString(36) + "-" + Math.random().toString(36).slice(2, 6)).slice(0, 24);
+  const days = Number(fields.days ?? 0);
+  const raw: Record<string, unknown> = {
+    id,
+    text: fields.text,
+    level: fields.level,
+    from: fields.from || undefined,
+    to: fields.to || undefined,
+    link: fields.link || undefined,
+    until: Number.isInteger(days) && days > 0 && days <= 365 ? now + days * 86400 : undefined,
+  };
+  const n = checkNotice(raw);
+  if (!n) {
+    throw new AdminError(
+      "That notice can't be posted. Check: text 1 to 240 characters without < or >, versions like 0.1.23 (from not above to), " +
+        "and a link only to github.com/SterlingAddons/... or sterlingaddons.com/...",
+    );
+  }
+  await saveNotices([...live, n]);
+  return "Posted. Apps pick it up within a few hours, or right away when they start.";
+}
+
+export async function removeNotice(id: string): Promise<string> {
+  if (!/^[a-z0-9-]{1,24}$/.test(id)) throw new AdminError("That isn't a notice id.");
+  const list = await notices();
+  if (!list.some((n) => n.id === id)) throw new AdminError("That notice is already gone.");
+  await saveNotices(list.filter((n) => n.id !== id));
+  return "Removed. Apps stop showing it at their next check.";
+}
+
 export interface Stats {
   db: { accounts: number; active_today: number; pairings: number; slots: number; packet_bytes: number; signups: string };
   usage: null | {
@@ -262,6 +314,8 @@ export interface Overview {
   server: { ok: boolean; ms: number | null; api: number | null; min_app: string | null; signups: string | null; error: string | null; url: string | null };
   db: Stats["db"] & { new_24h: number; new_7d: number; unpaired_new: number };
   cron: { last: number | null; cleanup_last: number | null; last_alert: string | null };
+  /** Installs = PCs with a key (one person can have several). Versions from PCs seen in 30 days. */
+  installs: { pcs: number; active_7d: number; active_30d: number; new_7d: number; versions: { version: string; pcs: number }[] };
   cleanup_preview: { unpaired_accounts: number; idle_accounts: number; old_copies: number; old_pairings: number; expired_codes: number };
   usage: Stats["usage"];
   health: null | { requests: number; errors: number; error_pct: number; cpuP50: number; cpuP99: number };
@@ -307,11 +361,18 @@ export async function overview(): Promise<Overview> {
         (SELECT COUNT(*) FROM slots WHERE updated_at < ${now - 30 * DAY}) AS old_copies,
         (SELECT COUNT(*) FROM pairings WHERE ended_at IS NOT NULL AND ended_at < ${now - 30 * DAY}) AS old_pairings,
         ((SELECT COUNT(*) FROM pair_codes WHERE expires_at < ${now}) + (SELECT COUNT(*) FROM link_codes WHERE expires_at < ${now})
-          + (SELECT COUNT(*) FROM invites WHERE expires_at < ${now})) AS expired_codes;`),
+          + (SELECT COUNT(*) FROM invites WHERE expires_at < ${now})) AS expired_codes;
+      SELECT (SELECT COUNT(*) FROM keys) AS pcs,
+        (SELECT COUNT(*) FROM keys WHERE last_seen > ${now - 7 * DAY}) AS active_7d,
+        (SELECT COUNT(*) FROM keys WHERE last_seen > ${now - 30 * DAY}) AS active_30d,
+        (SELECT COUNT(*) FROM keys WHERE created_at > ${now - 7 * DAY}) AS new_7d;
+      SELECT COALESCE(app_version, 'older than 0.1.25') AS version, COUNT(*) AS pcs FROM keys
+        WHERE last_seen > ${now - 30 * DAY} GROUP BY app_version ORDER BY pcs DESC LIMIT 12;`),
   ]);
   const [c] = sets[0];
   const [k] = sets[1];
   const [p] = sets[2];
+  const [i] = sets[3] ?? [{}];
   const out: Overview = {
     server: srv,
     db: {
@@ -323,6 +384,10 @@ export async function overview(): Promise<Overview> {
       last: k.cron_last ? Number(k.cron_last) : null,
       cleanup_last: k.cleanup_last ? Number(k.cleanup_last) : null,
       last_alert: k.last_alert ? String(k.last_alert).slice("alerted:".length) : null,
+    },
+    installs: {
+      pcs: Number(i.pcs ?? 0), active_7d: Number(i.active_7d ?? 0), active_30d: Number(i.active_30d ?? 0), new_7d: Number(i.new_7d ?? 0),
+      versions: (sets[4] ?? []).map((r: any) => ({ version: String(r.version), pcs: Number(r.pcs) })),
     },
     cleanup_preview: {
       unpaired_accounts: Number(p.unpaired_accounts), idle_accounts: Number(p.idle_accounts), old_copies: Number(p.old_copies),

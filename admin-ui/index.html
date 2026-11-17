@@ -14,6 +14,7 @@
     <button type="button" data-page="overview">Overview</button>
     <button type="button" data-page="accounts">Accounts</button>
     <button type="button" data-page="signups">Sign-ups</button>
+    <button type="button" data-page="notices">Notices</button>
     <div class="foot"><span id="srv-url"></span><br><span id="sign-in"></span></div>
   </nav>
 
@@ -27,6 +28,7 @@
         <div class="card stat"><div class="v" id="s-active"></div><div class="l">Active today</div></div>
         <div class="card stat"><div class="v" id="s-pairings"></div><div class="l">Live pairings</div></div>
       </div>
+      <section class="card"><h2>Installs <span class="small muted">(one per PC; a person can have more than one)</span></h2><div class="grid2"><div id="inst-rows" class="kvs"></div><div><div class="small muted">App versions, PCs seen in 30 days</div><div id="inst-vers" class="kvs"></div></div></div></section>
       <section class="card"><h2>Server</h2><div id="server-rows" class="kvs"></div></section>
       <section class="card"><h2>Cloudflare today <span class="small muted">(free plan, resets at 00:00 UTC)</span></h2><div id="meters"></div><div id="health" class="kvs"></div><div id="notes" class="small muted"></div></section>
       <div class="grid2">
@@ -52,6 +54,27 @@
       <div class="row gap-top"><button type="button" class="btn primary" id="su-toggle" disabled>...</button></div>
     </section>
     <section class="card small muted">Existing accounts and pairings keep working either way. In invite mode, any user can make a 24 hour invite code in their app.</section>
+  </main>
+
+  <main class="page" id="page-notices" hidden>
+    <div class="pagehead"><div><h1>Notices</h1><div class="small muted">A banner on the Companion app's Home page, for the app versions you pick. Apps check when they start and every few hours. Works in app 0.1.25 and newer.</div></div><button type="button" class="btn" id="no-refresh">Refresh</button></div>
+    <section class="card"><h2>Showing now</h2><div id="no-list" class="col"><div class="muted">Loading...</div></div></section>
+    <section class="card framed col">
+      <h2>Post a notice</h2>
+      <label class="field"><span>Message <span class="small muted" id="no-count">0 / 240</span></span><textarea id="no-text" maxlength="240" rows="3" placeholder="Manual update needed: download the newest version from the app's page and run it."></textarea></label>
+      <div class="grid3">
+        <label class="field"><span>Colour</span><select id="no-level"><option value="info">Gold: news</option><option value="warn">Amber: heads-up</option><option value="bad">Red: action needed</option></select></label>
+        <label class="field"><span>From version <span class="small muted">(blank = any)</span></span><input id="no-from" placeholder="0.1.0" inputmode="decimal"></label>
+        <label class="field"><span>To version <span class="small muted">(blank = any)</span></span><input id="no-to" placeholder="0.1.23" inputmode="decimal"></label>
+      </div>
+      <div class="grid2">
+        <label class="field"><span>Button link <span class="small muted">(optional, Sterling pages only)</span></span><input id="no-link" placeholder="https://github.com/SterlingAddons/SterlingQuestSync-App/releases/latest"></label>
+        <label class="field"><span>Take it down after</span><select id="no-days"><option value="0">Never (remove by hand)</option><option value="1">1 day</option><option value="3">3 days</option><option value="7">7 days</option><option value="30">30 days</option></select></label>
+      </div>
+      <div class="small muted">Preview</div>
+      <div id="no-preview" class="notice info"><span class="t"></span></div>
+      <div class="row end"><button type="button" class="btn primary" id="no-post">Post notice</button></div>
+    </section>
   </main>
 </div>
 

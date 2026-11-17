@@ -66,6 +66,7 @@ function go(p) {
   if (p === "overview") loadOverview();
   if (p === "accounts") loadAccounts();
   if (p === "signups") loadSignups();
+  if (p === "notices") loadNotices();
 }
 
 let lastSignups = null;
@@ -89,6 +90,14 @@ async function loadOverview() {
     $("s-active").textContent = fmt(o.db.active_today);
     $("s-pairings").textContent = fmt(o.db.pairings);
 
+    const ins = o.installs;
+    kv($("inst-rows"), [
+      ["PCs with the app", fmt(ins.pcs)],
+      ["Used in the last 7 days", fmt(ins.active_7d), "good"],
+      ["Used in the last 30 days", fmt(ins.active_30d)],
+      ["New in the last 7 days", fmt(ins.new_7d)],
+    ]);
+    kv($("inst-vers"), ins.versions.length ? ins.versions.map((v) => [v.version, fmt(v.pcs)]) : [["None yet", ""]]);
     const s = o.server;
     kv($("server-rows"), [
       ["Status", s.ok ? "Online" : "Not answering", s.ok ? "good" : "bad"],
@@ -186,6 +195,77 @@ $("ac-refresh").onclick = () => busy($("ac-refresh"), loadAccounts);
 $("backup").onclick = () => busy($("backup"), async () => { $("backup").textContent = "Backing up..."; try { toast((await api("backup")).message); } finally { $("backup").textContent = "Back up now"; } });
 $("open-backups").onclick = () => api("openbackups").catch(fail);
 for (const b of document.querySelectorAll("[data-page]")) b.addEventListener("click", () => go(b.dataset.page));
+
+// ---------------------------------------------------------------- notices
+
+const LEVEL_NAME = { info: "Gold: news", warn: "Amber: heads-up", bad: "Red: action needed" };
+function versionsText(n) {
+  if (n.from && n.to) return n.from === n.to ? "App " + n.from : "Apps " + n.from + " to " + n.to;
+  if (n.to) return "Apps " + n.to + " and older";
+  if (n.from) return "Apps " + n.from + " and newer";
+  return "Every app version";
+}
+function noticeBox(n, withMeta) {
+  const box = el("div", "notice " + n.level);
+  const left = el("div");
+  left.append(el("div", "t", n.text));
+  if (withMeta) {
+    const bits = [LEVEL_NAME[n.level], versionsText(n)];
+    if (n.link) bits.push("Button: " + n.link.replace("https://", ""));
+    bits.push(n.until ? "Ends " + new Date(n.until * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Stays until removed");
+    left.append(el("div", "meta", bits.join(" · ")));
+  }
+  box.append(left);
+  return box;
+}
+
+async function loadNotices() {
+  const list = $("no-list");
+  try {
+    const rows = await api("notices");
+    list.replaceChildren();
+    const now = Date.now() / 1000;
+    const live = rows.filter((n) => !n.until || n.until > now);
+    if (!live.length) list.append(el("div", "muted", "No notices. Apps show nothing extra."));
+    for (const n of live) {
+      const box = noticeBox(n, true);
+      const b = el("button", "btn bad", "Remove"); b.type = "button";
+      b.onclick = async () => {
+        const ok = await dialog("Remove this notice?", [noticeBox(n, false), el("p", "", "Apps stop showing it at their next check.")], [["Cancel", false, "ghost"], ["Remove", true, "bad"]]);
+        if (ok) busy(b, async () => { toast((await api("removenotice", { id: n.id })).message); loadNotices(); });
+      };
+      box.append(b); list.append(box);
+    }
+  } catch (e) { fail(e); }
+}
+
+function previewNotice() {
+  const text = $("no-text").value.replace(/\s+/g, " ").trim();
+  $("no-count").textContent = $("no-text").value.length + " / 240";
+  const p = $("no-preview");
+  p.className = "notice " + $("no-level").value;
+  p.replaceChildren(noticeBox({ text: text || "Your message shows here.", level: $("no-level").value }, false).firstChild);
+  if ($("no-link").value.trim()) { const b = el("span", "btn", "Open"); p.append(b); }
+}
+for (const id of ["no-text", "no-level", "no-link"]) $(id).addEventListener("input", previewNotice);
+
+$("no-post").onclick = async () => {
+  const fields = {
+    text: $("no-text").value, level: $("no-level").value, from: $("no-from").value.trim(), to: $("no-to").value.trim(),
+    link: $("no-link").value.trim(), days: Number($("no-days").value),
+  };
+  const n = { ...fields, text: fields.text.replace(/\s+/g, " ").trim(), until: fields.days ? Math.floor(Date.now() / 1000) + fields.days * 86400 : undefined };
+  if (!n.text) return toast("Write a message first.", true);
+  const ok = await dialog("Post this notice?", [noticeBox(n, true), el("p", "", "Every Companion app in that version range shows it on its Home page.")], [["Cancel", false, "ghost"], ["Post notice", true, "primary"]]);
+  if (!ok) return;
+  busy($("no-post"), async () => {
+    toast((await api("addnotice", fields)).message);
+    $("no-text").value = ""; $("no-link").value = ""; previewNotice();
+    loadNotices();
+  });
+};
+$("no-refresh").onclick = () => busy($("no-refresh"), loadNotices);
+previewNotice();
 
 // Tell the tool the window is still open, so it can stop on its own after the window closes.
 setInterval(() => api("ping").catch(() => {}), 15000);

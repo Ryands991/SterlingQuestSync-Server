@@ -22,6 +22,7 @@ Related: [Sterling Quest Sync add-on](https://github.com/SterlingAddons/Sterling
 - **Data only flows through a pairing.** One friend's app makes a pairing code, the other redeems it (typed in by hand, or passed between the two apps through Sterling in game when they're already partners there). Codes are random, single use, expire in 24 hours, and are rate limited. Nobody can send a request to a stranger, and listing a character's GUID grants nothing.
 - **Newest save wins.** Uploads carry the game's server time from the save, and the server refuses older ones.
 - **Fair use for everyone.** Each account can save up to 1,000 uploads a day, a save can't be dated more than a day ahead, and every request is rate limited per address and per key. The public server also has a Cloudflare rate limiting rule in front of it.
+- **Notices are plain text.** The owner can post a short notice (shown on the app's Home page) through Sterling Admin. The server and the app both check it: plain text only, and its button can only open Sterling's own pages.
 - **Strict input.** Copies must match `^[A-Za-z0-9()]+$` and stay under 64 KB. Every query uses bound parameters. There are no listing endpoints.
 - **No admin API.** Owner jobs run in Sterling Admin, a separate tool in this repo that runs only on the owner's PC, through Wrangler and their Cloudflare login (or a token limited to D1 and analytics). The Sterling Quest Sync app has no owner code. See [SETUP.md](SETUP.md#5-owner-jobs-sterling-admin).
 - **The trust we accept:** pair signing keys pass through the server, so whoever runs a server could forge partner progress. It can't run code in anyone's game or touch a character.
@@ -34,7 +35,7 @@ Found a security problem? Please report it privately through the app repo's [sec
 
 What's stored:
 
-- Your account (a random ID), and for each PC a hashed key, a label you pick and when it was last seen.
+- Your account (a random ID), and for each PC a hashed key, a label you pick, when it was last seen, and which version of the Companion app it last used.
 - The characters you list: GUID, name and realm.
 - Your pairings, and the latest copy of your quest log and finished quests for each partner (and one for your own other PCs).
 - When each copy was uploaded. Upload times show roughly when you play.

@@ -13,7 +13,7 @@ import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { accounts, ban, signups, overview, backup, backupDir, signIn, AdminError } from "./admin-lib";
+import { accounts, ban, signups, overview, backup, backupDir, signIn, notices, addNotice, removeNotice, AdminError } from "./admin-lib";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const UI = join(HERE, "..", "admin-ui");
@@ -89,6 +89,9 @@ const JOBS: Record<string, (b: Record<string, unknown>) => Promise<unknown>> = {
   ban: (b) => ban(String(b.id ?? ""), true).then((message) => ({ message })),
   unban: (b) => ban(String(b.id ?? ""), false).then((message) => ({ message })),
   signups: (b) => signups(String(b.mode ?? "")).then((message) => ({ message })),
+  notices: () => notices(),
+  addnotice: (b) => addNotice(b).then((message) => ({ message })),
+  removenotice: (b) => removeNotice(String(b.id ?? "")).then((message) => ({ message })),
   ping: async () => ({ ok: true }),
 };
 
