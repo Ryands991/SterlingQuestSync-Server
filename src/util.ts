@@ -3,6 +3,10 @@
 export const API_VERSION = 1;
 export const MIN_APP_VERSION = "0.1.0";
 
+// The Companion app's update feed. Apps from 0.1.26 ask this server first, so if the release files
+// ever move, only this line changes and every installed app keeps updating.
+export const UPDATE_FEED = "https://github.com/SterlingAddons/SterlingQuestSync-App/releases/latest/download/latest.json";
+
 export const DAY = 86400;
 export const PAIR_CODE_TTL = DAY;            // 24 hours
 export const LINK_CODE_TTL = 10 * 60;        // 10 minutes

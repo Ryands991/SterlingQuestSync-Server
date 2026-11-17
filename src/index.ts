@@ -2,7 +2,7 @@
 // Identity comes only from the bearer key. Data only flows through an active pairing.
 
 import {
-  API_VERSION, MIN_APP_VERSION, DAY, PAIR_CODE_TTL, LINK_CODE_TTL, INVITE_TTL,
+  API_VERSION, MIN_APP_VERSION, UPDATE_FEED, DAY, PAIR_CODE_TTL, LINK_CODE_TTL, INVITE_TTL,
   MAX_PARTNERS, MAX_CHARACTERS, MAX_KEYS, MAX_PACKET, INBOX_LIMIT, MAX_UPLOADS_PER_DAY, MAX_CLOCK_AHEAD, pathPart,
   HttpError, json, fail, now, randomHex, randomCode, groupCode, normalizeCode, sha256,
   RE_NAME, RE_REALM, RE_PACKET, guid, label, id, readJson, bearer,
@@ -544,6 +544,8 @@ type AuthHandler = (req: Request, env: Env, a: Auth, m: RegExpMatchArray) => Pro
 
 const open: [string, RegExp, Handler][] = [
   ["GET", /^\/v1\/meta$/, (_r, env) => meta(env)],
+  // A plain redirect: no database, no key. The app checks the update's signature itself.
+  ["GET", /^\/update\/latest\.json$/, async () => new Response(null, { status: 302, headers: { location: UPDATE_FEED, "cache-control": "no-store" } })],
   ["POST", /^\/v1\/accounts$/, (r, env) => createAccount(r, env)],
   ["POST", /^\/v1\/recover$/, (r, env) => recover(r, env)],
   ["POST", /^\/v1\/link-codes\/redeem$/, (r, env) => redeemLinkCode(r, env)],

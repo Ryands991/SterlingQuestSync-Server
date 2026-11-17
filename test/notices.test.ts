@@ -108,3 +108,13 @@ describe("app versions per PC", () => {
     expect(await ver(u.key)).toBe("0.1.26");
   });
 });
+
+describe("update feed", () => {
+  it("sends the app to the newest latest.json", async () => {
+    const { SELF } = await import("cloudflare:test");
+    const r = await SELF.fetch("https://sync.test/update/latest.json", { redirect: "manual" });
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toBe("https://github.com/SterlingAddons/SterlingQuestSync-App/releases/latest/download/latest.json");
+    expect((await SELF.fetch("https://sync.test/update/other.json", { redirect: "manual" })).status).toBe(404);
+  });
+});
