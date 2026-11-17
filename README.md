@@ -1,8 +1,8 @@
-# Sterling Quest Sync, server
+# Sterling Quest Sync Companion, server
 
-**For use with [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQuest).** Start there for the big picture of what Sterling does and how the pieces fit together. This page is all about the sync server.
+**For use with the [Sterling Quest Sync](https://github.com/SterlingAddons/SterlingQuest) add-on** (formerly Sterling Quest Tracker) **and its optional Companion app.** Start at the add-on's page for the big picture of what it does and how the pieces fit together. This page is all about the sync server.
 
-**You don't need to run this.** The [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App) connects to my server at `sync.sterlingaddons.com`, free for everyone. This repo is the code behind it, here so you can see exactly what it does, or run your own if you'd rather.
+**You don't need to run this.** The [Sterling Quest Sync Companion app](https://github.com/SterlingAddons/SterlingQuestSync-App) connects to my server at `sync.sterlingaddons.com`, free for everyone. This repo is the code behind it, here so you can see exactly what it does, or run your own if you'd rather.
 
 **Status:** Still in heavy development and not finished yet. Things are mostly settled now, but big changes can still come with an update.
 
@@ -10,11 +10,11 @@
 
 ## What this is
 
-Sterling Quest Tracker already syncs quest progress live between friends who are online together. This server covers the rest: when your play times don't overlap, the [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App) shares your progress each time the game saves (when you log out or /reload), and your friend's app picks it up before they log in.
+The Sterling Quest Sync add-on already syncs quest progress live between friends who are online together. This server covers the rest: when your play times don't overlap, the [Sterling Quest Sync Companion app](https://github.com/SterlingAddons/SterlingQuestSync-App) shares your progress each time the game saves (when you log out or /reload), and your friend's app picks it up before they log in.
 
 It's one Cloudflare Worker and one D1 database. The server is a mailbox: it keeps the latest full copy per character and partner, checks who may read what, and numbers every upload. It never runs anything in the game, and it treats the copies it carries as opaque.
 
-Related: [Sterling Quest Tracker](https://github.com/SterlingAddons/SterlingQuest) · [Sterling Quest Sync app](https://github.com/SterlingAddons/SterlingQuestSync-App)
+Related: [Sterling Quest Sync add-on](https://github.com/SterlingAddons/SterlingQuest) · [Sterling Quest Sync Companion app](https://github.com/SterlingAddons/SterlingQuestSync-App)
 
 ## How it stays safe
 
@@ -62,4 +62,4 @@ npm run typecheck
 
 MIT. See [LICENSE](LICENSE).
 
-> Built by Kael with the help of Claude, an AI model by Anthropic. The ideas, testing and decisions are mine; much of the code was written with Claude. Everything is tested in game with friends.
+> Built by SterlingAddons with the help of Claude, an AI model by Anthropic. The ideas, testing and decisions are mine; much of the code was written with Claude. Everything is tested in game with friends.

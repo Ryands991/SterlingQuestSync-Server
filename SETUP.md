@@ -1,4 +1,4 @@
-# Running your own Sterling Quest Sync server
+# Running your own Sterling Quest Sync Companion server
 
 Everything here works on a free Cloudflare account. You need a domain on Cloudflare for the server's address (for example `sync.example.com`) and [Node.js](https://nodejs.org) 20 or newer.
 
@@ -38,7 +38,7 @@ npx wrangler deploy
 
 Check it: open `https://sync.example.com/v1/meta`. You should see `{"api":1,...}`.
 
-Point the Sterling Quest Sync app at your address in its setup.
+Point the Companion app at your address in its setup.
 
 ## 4. Optional: usage alert
 
@@ -67,7 +67,7 @@ The free plan stops at 100,000 requests a day, and anyone can send that many. Th
 
 ## 5. Owner jobs: Sterling Admin
 
-Owner jobs are a separate tool that lives in this server folder. They are not part of the Sterling Quest Sync app, and the public app has no owner code at all.
+Owner jobs are a separate tool that lives in this server folder. They are not part of the Companion app, and the public app has no owner code at all.
 
 **The window.** Double-click `Sterling Admin.cmd` (or run `npm run admin-ui`). It opens a small window with:
 
