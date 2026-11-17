@@ -1,7 +1,7 @@
 {
   "name": "sterling-quest-sync-server",
   "version": "0.1.0",
-  "description": "Sterling Quest Sync server: a Cloudflare Worker and D1 database that carry Sterling Quest Tracker's offline sync between friends.",
+  "description": "Sync server for the Sterling Quest Sync add-on and its optional Sterling Quest Sync Companion app: a Cloudflare Worker and D1 database that pass quest progress between paired friends who play at different times.",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p . && tsc -p scripts",
