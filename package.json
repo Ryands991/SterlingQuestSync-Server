@@ -9,10 +9,13 @@
     "deploy": "wrangler deploy",
     "migrate": "wrangler d1 migrations apply sterling-quest-sync --remote",
     "admin": "tsx scripts/admin.ts",
-    "admin-ui": "tsx scripts/admin-ui.ts"
+    "admin-ui": "tsx scripts/admin-ui.ts",
+    "style": "node tools/style.mjs",
+    "style:check": "node tools/style.mjs --check"
   },
   "license": "MIT",
   "devDependencies": {
+    "@babel/parser": "^8.1.2",
     "@cloudflare/vitest-plugin": "^1.8.2",
     "@cloudflare/workers-types": "^5.20261115.1",
     "@types/node": "^26.6.6",
