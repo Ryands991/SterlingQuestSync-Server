@@ -241,7 +241,6 @@ describe("pushing code into the game", () =>
             "abc;",
             "STO1:1/1:abc",
         ])
-
         {
             expect((await upload(a, b.guid, bad)).status, bad).toBe(400);
         }
@@ -273,7 +272,6 @@ describe("pushing code into the game", () =>
             { packet: "AAA", game_time: T0, proto: -1 },
             { packet: ["AAA"], game_time: T0, proto: 6 },
         ])
-
         {
             expect((await api("PUT", `/v1/slots/${a.guid}/${b.guid}`, a.key, body)).status).toBe(400);
         }

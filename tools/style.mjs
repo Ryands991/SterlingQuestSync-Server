@@ -434,7 +434,7 @@ function blankLines(text, file)
         {
             const ns = n.text.trim();
 
-            if (!CLOSERS.includes(firstChar(n)) && !/^(while\b|\.|\?\.|\?|:|=>|as\b|,)/.test(ns)) out.push({ text: "", mask: [] });
+            if (!CLOSERS.includes(firstChar(n)) && !/^(while\b|\.|\?\.|\?|:|=>|as\b|,|\{)/.test(ns)) out.push({ text: "", mask: [] });
         }
     }
 
