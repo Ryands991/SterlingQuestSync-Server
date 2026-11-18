@@ -97,7 +97,12 @@ function parseWranglerJson(raw: string): any
 {
     const text = raw.replace(/\x1b\[[0-9;]*m/g, "");
 
-    try { return JSON.parse(text); } catch { /* look for the JSON part */ }
+    try
+    {
+        return JSON.parse(text);
+    }
+
+    catch { /* look for the JSON part */ }
 
     for (let i = text.indexOf("["); i >= 0; i = text.indexOf("[", i + 1))
     {
@@ -105,12 +110,22 @@ function parseWranglerJson(raw: string): any
 
         if (end <= i) break;
 
-        try { return JSON.parse(text.slice(i, end + 1)); } catch { /* try the next bracket */ }
+        try
+        {
+            return JSON.parse(text.slice(i, end + 1));
+        }
+
+        catch { /* try the next bracket */ }
     }
 
     const first = text.indexOf("{"), last = text.lastIndexOf("}");
 
-    if (first >= 0 && last > first) { try { return JSON.parse(text.slice(first, last + 1)); } catch { /* none */ } }
+    if (first >= 0 && last > first) { try
+    {
+        return JSON.parse(text.slice(first, last + 1));
+    }
+
+    catch { /* none */ } }
 
     return undefined;
 }

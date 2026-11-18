@@ -37,10 +37,14 @@ async function main(): Promise<void>
             break;
         }
 
-        case "ban": console.log(await ban(arg ?? "", true)); break;
-        case "unban": console.log(await ban(arg ?? "", false)); break;
-        case "signups": console.log(await signups(arg ?? "")); break;
-        case "notices": console.table(await notices()); break;
+        case "ban": console.log(await ban(arg ?? "", true));
+        break;
+        case "unban": console.log(await ban(arg ?? "", false));
+        break;
+        case "signups": console.log(await signups(arg ?? ""));
+        break;
+        case "notices": console.table(await notices());
+        break;
         case "stats":
         {
             const report = await stats();

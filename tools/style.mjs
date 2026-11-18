@@ -6,6 +6,8 @@
 //     node tools/style.mjs --verify   prove the last run changed formatting only (see below)
 //
 // What it does, outside strings, templates, regexes and comments only:
+//   0. A block written on one line ("{ a(); b(); }", a one-line function body, try / catch) opens up
+//      so its braces sit on their own lines, and each statement gets its own line.
 //   1. Joins a statement that was split over several lines when it fits on one (160 characters).
 //   2. 4 spaces per indent level (the code was 2).
 //   3. An opening brace, bracket or parenthesis is never the last thing on a line: it moves to its own
@@ -82,6 +84,77 @@ function walk(node, fn, parent = null)
         if (Array.isArray(v)) v.forEach((c) => walk(c, fn, node));
         else if (v && typeof v.type === "string") walk(v, fn, node);
     }
+}
+
+// ---- 0. a block written on one line gets its braces on their own lines
+
+// Which one-line blocks open up: any with two or more statements, function bodies, and try / catch / finally.
+function opensUp(node, parent)
+{
+    if (node.type !== "BlockStatement" || node.loc.start.line !== node.loc.end.line || !node.body.length) return false;
+    if (node.body.length >= 2) return true;
+
+    return /Function/.test(parent?.type || "") || parent?.type === "TryStatement" || parent?.type === "CatchClause";
+}
+
+function expandBlocks(text, file)
+{
+    for (let round = 0; round < 2000; round++)
+    {
+        const ast = parseFile(text, file);
+        let hit = null;
+
+        walk(ast.program, (node, parent) =>
+        {
+            if (hit) return false;
+            if (opensUp(node, parent) && !(ast.comments || []).some((c) => c.start > node.start && c.end < node.end)) hit = node;
+        });
+
+        if (!hit) return text;
+
+        const lineStart = text.lastIndexOf("\n", hit.start - 1) + 1;
+        const indent = /^[ \t]*/.exec(text.slice(lineStart))[0];
+        const lineEnd = text.indexOf("\n", hit.end) === -1 ? text.length : text.indexOf("\n", hit.end);
+        const body = hit.body.map((st) => indent + "    " + text.slice(st.start, st.end)).join("\n");
+        let rest = text.slice(hit.end, lineEnd);
+
+        // what followed the block: ";" or ")" stay on the closing line, else/catch/finally are split later,
+        // anything else goes on its own line
+        if (rest.trim() && !/^[;,)\]]/.test(rest) && !/^\s*(else|catch|finally|while)\b/.test(rest)) rest = "\n" + indent + rest.trim();
+
+        text = text.slice(0, hit.start).trimEnd() + "\n" + indent + "{\n" + body + "\n" + indent + "}" + rest + text.slice(lineEnd);
+    }
+
+    throw new Error("expandBlocks did not settle");
+}
+
+// One statement per line: "const a = x; const b = y;" becomes two lines.
+function splitStatements(text, file)
+{
+    const ast = parseFile(text, file);
+    const cuts = [];
+
+    walk(ast.program, (node) =>
+    {
+        const list = node.type === "Program" || node.type === "BlockStatement" ? node.body : node.type === "SwitchCase" ? node.consequent : null;
+
+        if (!list) return;
+
+        for (let i = 1; i < list.length; i++)
+        {
+            if (list[i].loc.start.line === list[i - 1].loc.end.line) cuts.push(list[i].start);
+        }
+    });
+
+    for (const at of cuts.sort((a, b) => b - a))
+    {
+        const lineStart = text.lastIndexOf("\n", at - 1) + 1;
+        const indent = /^[ \t]*/.exec(text.slice(lineStart))[0];
+
+        text = text.slice(0, at).trimEnd() + "\n" + indent + text.slice(at);
+    }
+
+    return text;
 }
 
 // ---- 1. join split statements
@@ -361,7 +434,7 @@ function blankLines(text, file)
         {
             const ns = n.text.trim();
 
-            if (!CLOSERS.includes(firstChar(n)) && !/^(else\b|catch\b|finally\b|while\b|\.|\?\.|\?|:|=>|as\b|,)/.test(ns)) out.push({ text: "", mask: [] });
+            if (!CLOSERS.includes(firstChar(n)) && !/^(while\b|\.|\?\.|\?|:|=>|as\b|,)/.test(ns)) out.push({ text: "", mask: [] });
         }
     }
 
@@ -391,6 +464,8 @@ function blankLines(text, file)
 
 function style(text, file)
 {
+    text = expandBlocks(text, file);
+    text = splitStatements(text, file);
     text = joinStatements(text, file);
     text = reindent(text, file);
     text = moveOpeners(text, file);

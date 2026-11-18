@@ -6,7 +6,16 @@ const KEY = location.hash.slice(1);
 history.replaceState(null, "", location.pathname); // keep the key out of the address bar
 
 const $ = (id) => document.getElementById(id);
-const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const el = (tag, cls, text) =>
+{
+    const e = document.createElement(tag);
+
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+
+    return e;
+};
+
 const fmt = (n) => Number(n).toLocaleString();
 
 async function api(job, body)
@@ -23,14 +32,37 @@ let toastTimer;
 
 function toast(text, bad)
 {
-    const t = $("toast"); t.textContent = String(text).replace(/^Error: /, ""); t.className = "toast" + (bad ? " bad" : ""); t.hidden = false;
+    const t = $("toast");
 
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), bad ? 7000 : 3000);
+    t.textContent = String(text).replace(/^Error: /, "");
+    t.className = "toast" + (bad ? " bad" : "");
+    t.hidden = false;
+
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (t.hidden = true), bad ? 7000 : 3000);
 }
 
 const fail = (e) => toast(e.message || e, true);
 
-async function busy(btn, fn) { if (btn) btn.disabled = true; try { return await fn(); } catch (e) { fail(e); } finally { if (btn) btn.disabled = false; } }
+async function busy(btn, fn)
+{
+    if (btn) btn.disabled = true;
+
+    try
+    {
+        return await fn();
+    }
+
+    catch (e)
+    {
+        fail(e);
+    }
+
+    finally
+    {
+        if (btn) btn.disabled = false;
+    }
+}
 
 function ago(t)
 {
@@ -40,8 +72,13 @@ function ago(t)
 
     if (s < 90) return "just now";
 
-    const m = Math.round(s / 60); if (m < 60) return m + " min ago";
-    const h = Math.round(m / 60); if (h < 48) return h + (h === 1 ? " hr ago" : " hrs ago");
+    const m = Math.round(s / 60);
+
+    if (m < 60) return m + " min ago";
+
+    const h = Math.round(m / 60);
+
+    if (h < 48) return h + (h === 1 ? " hr ago" : " hrs ago");
 
     return Math.round(h / 24) + " days ago";
 }
@@ -54,7 +91,9 @@ function day(t)
 
     if (d.toDateString() === now.toDateString()) return "Today";
 
-    const y = new Date(now); y.setDate(now.getDate() - 1);
+    const y = new Date(now);
+
+    y.setDate(now.getDate() - 1);
 
     if (d.toDateString() === y.toDateString()) return "Yesterday";
 
@@ -65,7 +104,13 @@ function kv(box, rows)
 {
     box.replaceChildren();
 
-    for (const [k, v, cls] of rows) { const d = el("div"); d.append(el("span", "", k), el("span", cls || "", v)); box.append(d); }
+    for (const [k, v, cls] of rows)
+    {
+        const d = el("div");
+
+        d.append(el("span", "", k), el("span", cls || "", v));
+        box.append(d);
+    }
 }
 
 function dialog(title, body, buttons)
@@ -75,13 +120,31 @@ function dialog(title, body, buttons)
         $("dlg-title").textContent = title;
         $("dlg-body").replaceChildren(...body);
 
-        const row = $("dlg-btns"); row.replaceChildren();
-        const close = (v) => { $("scrim").hidden = true; resolve(v); };
+        const row = $("dlg-btns");
 
-        for (const [label, value, cls] of buttons) { const b = el("button", "btn " + (cls || ""), label); b.type = "button"; b.onclick = () => close(value); row.append(b); }
+        row.replaceChildren();
+
+        const close = (v) =>
+        {
+            $("scrim").hidden = true;
+            resolve(v);
+        };
+
+        for (const [label, value, cls] of buttons)
+        {
+            const b = el("button", "btn " + (cls || ""), label);
+
+            b.type = "button";
+            b.onclick = () => close(value);
+            row.append(b);
+        }
 
         $("scrim").hidden = false;
-        $("scrim").onkeydown = (e) => { if (e.key === "Escape") close(null); };
+        $("scrim").onkeydown = (e) =>
+        {
+            if (e.key === "Escape") close(null);
+        };
+
         row.firstElementChild.focus();
     });
 }
@@ -118,15 +181,20 @@ async function loadOverview()
         $("sign-in").textContent = o.sign_in === "token" ? "Using the database-only token" : "Using your Wrangler login";
         $("ov").hidden = false;
 
-        const w = $("warns"); w.replaceChildren();
+        const w = $("warns");
+
+        w.replaceChildren();
 
         if (!o.warnings.length) w.append(el("div", "okbox", "All good. Nothing needs your attention."));
 
         for (const x of o.warnings)
         {
-            const b = el("div", "warnbox"); const inner = el("div");
+            const b = el("div", "warnbox");
+            const inner = el("div");
 
-            inner.append(el("div", "t", x.text), el("div", "small", x.fix)); b.append(inner); w.append(b);
+            inner.append(el("div", "t", x.text), el("div", "small", x.fix));
+            b.append(inner);
+            w.append(b);
         }
 
         $("s-accounts").textContent = fmt(o.db.accounts);
@@ -159,17 +227,25 @@ async function loadOverview()
             ["Stored copies", fmt(o.db.slots) + " (" + Math.round(o.db.packet_bytes / 1024) + " KB)"],
         ]);
 
-        const m = $("meters"); m.replaceChildren();
+        const m = $("meters");
+
+        m.replaceChildren();
 
         for (const r of (o.usage ? o.usage.rows : []))
         {
-            const d = el("div", "meter"); const top = el("div", "row-between");
+            const d = el("div", "meter");
+            const top = el("div", "row-between");
 
             top.append(el("span", "", r.name), el("span", r.percent >= 50 ? "warn-t" : "", fmt(r.used) + " of " + fmt(r.limit) + " · " + r.percent.toFixed(0) + "%"));
 
-            const bar = el("div", "bar"); const i = el("i", r.percent >= 50 ? "warn" : ""); i.style.width = Math.min(100, Math.max(0.8, r.percent)) + "%"; bar.append(i);
+            const bar = el("div", "bar");
+            const i = el("i", r.percent >= 50 ? "warn" : "");
 
-            d.append(top, bar); m.append(d);
+            i.style.width = Math.min(100, Math.max(0.8, r.percent)) + "%";
+            bar.append(i);
+
+            d.append(top, bar);
+            m.append(d);
         }
 
         const h = o.health;
@@ -202,7 +278,11 @@ async function loadOverview()
         ]);
     }
 
-    catch (e) { fail(e); }
+    catch (e)
+    {
+        fail(e);
+    }
+
     $("ov-loading").hidden = true;
 }
 
@@ -216,7 +296,15 @@ async function loadAccounts()
 
         body.replaceChildren();
 
-        if (!rows.length) { const tr = el("tr"); const td = el("td", "muted", "No accounts yet."); td.colSpan = 6; tr.append(td); body.append(tr); }
+        if (!rows.length)
+        {
+            const tr = el("tr");
+            const td = el("td", "muted", "No accounts yet.");
+
+            td.colSpan = 6;
+            tr.append(td);
+            body.append(tr);
+        }
 
         for (const r of rows)
         {
@@ -230,13 +318,19 @@ async function loadAccounts()
             {
                 act.append(el("span", "bad", "Banned "));
 
-                const b = el("button", "btn", "Unban"); b.type = "button";
+                const b = el("button", "btn", "Unban");
+
+                b.type = "button";
 
                 b.onclick = async () =>
                 {
                     const ok = await dialog("Unban this account?", [el("div", "small muted mono", r.account), el("p", "", "It can sign in again. Its old pairings stay ended; friends pair again with new codes.")], [["Cancel", false, "ghost"], ["Unban", true, ""]]);
 
-                    if (ok) busy(b, async () => { toast((await api("unban", { id: r.account })).message); loadAccounts(); });
+                    if (ok) busy(b, async () =>
+                    {
+                        toast((await api("unban", { id: r.account })).message);
+                        loadAccounts();
+                    });
                 };
 
                 act.append(b);
@@ -244,29 +338,51 @@ async function loadAccounts()
 
             else
             {
-                const b = el("button", "btn bad", "Ban..."); b.type = "button";
+                const b = el("button", "btn bad", "Ban...");
+
+                b.type = "button";
 
                 b.onclick = async () =>
                 {
-                    const who = el("div", "small muted"); who.append("Account ", el("span", "mono", r.account), r.characters ? " (" + r.characters + ")" : "");
+                    const who = el("div", "small muted");
+
+                    who.append("Account ", el("span", "mono", r.account), r.characters ? " (" + r.characters + ")" : "");
+
                     const ok = await dialog("Ban this account?", [who, el("p", "", "Its pairings end, its stored copies and codes are deleted, and it can no longer sign in. You can unban later, but pairings stay ended.")], [["Cancel", false, "ghost"], ["Ban account", true, "bad"]]);
 
-                    if (ok) busy(b, async () => { toast((await api("ban", { id: r.account })).message); loadAccounts(); });
+                    if (ok) busy(b, async () =>
+                    {
+                        toast((await api("ban", { id: r.account })).message);
+                        loadAccounts();
+                    });
                 };
 
                 act.append(b);
             }
 
-            tr.append(act); body.append(tr);
+            tr.append(act);
+            body.append(tr);
         }
     }
 
-    catch (e) { fail(e); }
+    catch (e)
+    {
+        fail(e);
+    }
 }
 
 async function loadSignups()
 {
-    if (lastSignups === null) { try { lastSignups = (await api("overview")).db.signups; } catch (e) { return fail(e); } }
+    if (lastSignups === null) { try
+    {
+        lastSignups = (await api("overview")).db.signups;
+    }
+
+    catch (e)
+    {
+        return fail(e);
+    }
+    }
 
     const open = lastSignups === "open";
 
@@ -283,12 +399,31 @@ $("su-toggle").onclick = async () =>
 
     if (!ok) return;
 
-    busy($("su-toggle"), async () => { toast((await api("signups", { mode: open ? "off" : "on" })).message); lastSignups = open ? "invite" : "open"; loadSignups(); });
+    busy($("su-toggle"), async () =>
+    {
+        toast((await api("signups", { mode: open ? "off" : "on" })).message);
+        lastSignups = open ? "invite" : "open";
+        loadSignups();
+    });
 };
 
 $("ov-refresh").onclick = () => busy($("ov-refresh"), loadOverview);
 $("ac-refresh").onclick = () => busy($("ac-refresh"), loadAccounts);
-$("backup").onclick = () => busy($("backup"), async () => { $("backup").textContent = "Backing up..."; try { toast((await api("backup")).message); } finally { $("backup").textContent = "Back up now"; } });
+$("backup").onclick = () => busy($("backup"), async () =>
+{
+    $("backup").textContent = "Backing up...";
+
+    try
+    {
+        toast((await api("backup")).message);
+    }
+
+    finally
+    {
+        $("backup").textContent = "Back up now";
+    }
+});
+
 $("open-backups").onclick = () => api("openbackups").catch(fail);
 
 for (const b of document.querySelectorAll("[data-page]")) b.addEventListener("click", () => go(b.dataset.page));
@@ -346,20 +481,30 @@ async function loadNotices()
         for (const n of live)
         {
             const box = noticeBox(n, true);
-            const b = el("button", "btn bad", "Remove"); b.type = "button";
+            const b = el("button", "btn bad", "Remove");
+
+            b.type = "button";
 
             b.onclick = async () =>
             {
                 const ok = await dialog("Remove this notice?", [noticeBox(n, false), el("p", "", "Apps stop showing it at their next check.")], [["Cancel", false, "ghost"], ["Remove", true, "bad"]]);
 
-                if (ok) busy(b, async () => { toast((await api("removenotice", { id: n.id })).message); loadNotices(); });
+                if (ok) busy(b, async () =>
+                {
+                    toast((await api("removenotice", { id: n.id })).message);
+                    loadNotices();
+                });
             };
 
-            box.append(b); list.append(box);
+            box.append(b);
+            list.append(box);
         }
     }
 
-    catch (e) { fail(e); }
+    catch (e)
+    {
+        fail(e);
+    }
 }
 
 function previewNotice()
@@ -373,7 +518,12 @@ function previewNotice()
     p.className = "notice " + $("no-level").value;
     p.replaceChildren(noticeBox({ text: text || "Your message shows here.", level: $("no-level").value }, false).firstChild);
 
-    if ($("no-link").value.trim()) { const b = el("span", "btn", "Open"); p.append(b); }
+    if ($("no-link").value.trim())
+    {
+        const b = el("span", "btn", "Open");
+
+        p.append(b);
+    }
 }
 
 for (const id of ["no-text", "no-level", "no-link"]) $(id).addEventListener("input", previewNotice);
@@ -397,7 +547,9 @@ $("no-post").onclick = async () =>
     busy($("no-post"), async () =>
     {
         toast((await api("addnotice", fields)).message);
-        $("no-text").value = ""; $("no-link").value = ""; previewNotice();
+        $("no-text").value = "";
+        $("no-link").value = "";
+        previewNotice();
         loadNotices();
     });
 };

@@ -14,7 +14,10 @@ const ok = { id: "manual-0123", text: "Manual update needed: download 0.1.24 fro
 
 describe("notices in meta", () =>
 {
-    afterEach(async () => { await env.DB.prepare("DELETE FROM settings WHERE k = 'notices'").run(); });
+    afterEach(async () =>
+    {
+        await env.DB.prepare("DELETE FROM settings WHERE k = 'notices'").run();
+    });
 
     it("has an empty list when none are set", async () =>
     {

@@ -109,7 +109,15 @@ export function parseNotices(raw: string | null | undefined): Notice[]
 
     let list: unknown;
 
-    try { list = JSON.parse(raw); } catch { return []; }
+    try
+    {
+        list = JSON.parse(raw);
+    }
+
+    catch
+    {
+        return [];
+    }
 
     if (!Array.isArray(list)) return [];
 

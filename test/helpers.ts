@@ -39,7 +39,15 @@ export async function api(method: string, path: string, key?: string | null, bod
     let data: any = null;
     const text = await res.text();
 
-    try { data = JSON.parse(text); } catch { data = text; }
+    try
+    {
+        data = JSON.parse(text);
+    }
+
+    catch
+    {
+        data = text;
+    }
 
     return { status: res.status, data };
 }
