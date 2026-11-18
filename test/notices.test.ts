@@ -149,6 +149,10 @@ describe("app versions per PC", () =>
         await api("GET", "/v1/account", u.key, undefined, { "user-agent": "SterlingQuestSync/0.1.26" });
 
         expect(await ver(u.key)).toBe("0.1.26");
+
+        await api("GET", "/v1/account", u.key, undefined, { "user-agent": "SterlingQuestSync/0.1.28.01" });
+
+        expect(await ver(u.key)).toBe("0.1.28.01");
     });
 });
 

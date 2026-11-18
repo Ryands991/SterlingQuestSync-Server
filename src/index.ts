@@ -44,10 +44,10 @@ async function limit(limiter: RateLimit | undefined, key: string): Promise<void>
     if (!success) fail(429, "rate_limited");
 }
 
-/** The Companion app's version from its User-Agent ("SterlingQuestSync/0.1.25"), or null. */
+/** The Companion app's version from its User-Agent ("SterlingQuestSync/0.1.25", or "0.1.28.01" for an internal build), or null. */
 function appVersion(req: Request): string | null
 {
-    const match = /^SterlingQuestSync\/(\d{1,4}\.\d{1,4}\.\d{1,4})$/.exec(req.headers.get("user-agent") || "");
+    const match = /^SterlingQuestSync\/(\d{1,4}\.\d{1,4}\.\d{1,4}(?:\.\d{1,3})?)$/.exec(req.headers.get("user-agent") || "");
 
     return match ? match[1] : null;
 }
