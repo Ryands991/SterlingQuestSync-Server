@@ -9,8 +9,10 @@
 
 import { accounts, ban, signups, stats, notices, AdminError } from "./admin-lib";
 
-const day = (t: number | null) => (t ? new Date(t * 1000).toISOString().slice(0, 10) : "");
+// Unix seconds as a date, or blank.
+const day = (seconds: number | null) => (seconds ? new Date(seconds * 1000).toISOString().slice(0, 10) : "");
 
+// Runs the command-line job named on the command line.
 async function main(): Promise<void>
 {
     const [cmd, arg] = process.argv.slice(2);
@@ -21,15 +23,15 @@ async function main(): Promise<void>
         {
             const rows = await accounts();
 
-            console.table(rows.map((r) =>
+            console.table(rows.map((row) =>
             ({
-                account: r.account,
-                characters: r.characters.slice(0, 40),
-                pairings: r.pairings,
-                pcs: r.pcs,
-                created: day(r.created),
-                last_seen: day(r.last_seen),
-                banned: r.banned ? "BANNED" : "",
+                account: row.account,
+                characters: row.characters.slice(0, 40),
+                pairings: row.pairings,
+                pcs: row.pcs,
+                created: day(row.created),
+                last_seen: day(row.last_seen),
+                banned: row.banned ? "BANNED" : "",
             })));
 
             break;
@@ -41,17 +43,18 @@ async function main(): Promise<void>
         case "notices": console.table(await notices()); break;
         case "stats":
         {
-            const s = await stats();
+            const report = await stats();
 
             console.log("Database");
-            console.table(s.db);
+            console.table(report.db);
 
-            if (s.usage)
+            if (report.usage)
             {
-                console.log(`Cloudflare usage today (${s.usage.date}, UTC, whole account)`);
-                console.table(Object.fromEntries(s.usage.rows.map((r) => [r.name, { used: r.used, limit: r.limit, percent: r.percent.toFixed(1) }])));
+                console.log(`Cloudflare usage today (${report.usage.date}, UTC, whole account)`);
+                console.table(Object.fromEntries(report.usage.rows.map((row) => [row.name, { used: row.used, limit: row.limit, percent: row.percent.toFixed(1) }])));
             }
-            else if (s.usage_note) console.log(s.usage_note);
+
+            else if (report.usage_note) console.log(report.usage_note);
             break;
         }
 
@@ -60,8 +63,8 @@ async function main(): Promise<void>
     }
 }
 
-main().catch((e) =>
+main().catch((error) =>
 {
-    console.error(e instanceof AdminError ? e.message : e);
+    console.error(error instanceof AdminError ? error.message : error);
     process.exit(1);
 });

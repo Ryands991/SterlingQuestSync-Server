@@ -27,76 +27,79 @@ export const RE_LINK = /^https:\/\/(github\.com\/SterlingAddons\/|sterlingaddons
 
 const LEVELS: NoticeLevel[] = ["info", "warn", "bad"];
 
-function cleanText(v: unknown): string | null
+// Notice text as plain, tidy text, or null if it can't be shown safely.
+function cleanText(value: unknown): string | null
 {
-    if (typeof v !== "string") return null;
+    if (typeof value !== "string") return null;
 
-    const t = v.replace(/\s+/g, " ").trim();
+    const cleaned = value.replace(/\s+/g, " ").trim();
 
-    if (!t || t.length > MAX_NOTICE_TEXT) return null;
+    if (!cleaned || cleaned.length > MAX_NOTICE_TEXT) return null;
     // No control characters, no markup characters: it's always shown as plain text anyway.
-    if (/[\u0000-\u001f\u007f<>]/.test(t)) return null;
+    if (/[\u0000-\u001f\u007f<>]/.test(cleaned)) return null;
 
-    return t;
+    return cleaned;
 }
 
-export function verParts(v: string): number[]
+// "0.1.25" as [0, 1, 25].
+export function verParts(value: string): number[]
 {
-    return v.split(".").map(Number);
+    return value.split(".").map(Number);
 }
 
+// Compares two versions: below zero, zero or above zero.
 export function verCmp(a: string, b: string): number
 {
-    const x = verParts(a), y = verParts(b);
+    const left = verParts(a), right = verParts(b);
 
-    for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+    for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
 
     return 0;
 }
 
 /** One notice, checked. null when anything about it is off. */
-export function checkNotice(v: unknown): Notice | null
+export function checkNotice(value: unknown): Notice | null
 {
-    if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 
-    const o = v as Record<string, unknown>;
+    const fields = value as Record<string, unknown>;
 
-    if (typeof o.id !== "string" || !RE_ID.test(o.id)) return null;
+    if (typeof fields.id !== "string" || !RE_ID.test(fields.id)) return null;
 
-    const text = cleanText(o.text);
+    const text = cleanText(fields.text);
 
     if (!text) return null;
 
-    const level = LEVELS.includes(o.level as NoticeLevel) ? (o.level as NoticeLevel) : null;
+    const level = LEVELS.includes(fields.level as NoticeLevel) ? (fields.level as NoticeLevel) : null;
 
     if (!level) return null;
 
-    const n: Notice = { id: o.id, text, level };
+    const notice: Notice = { id: fields.id, text, level };
 
-    for (const k of ["from", "to"] as const)
+    for (const bound of ["from", "to"] as const)
     {
-        if (o[k] == null || o[k] === "") continue;
-        if (typeof o[k] !== "string" || !RE_VER.test(o[k] as string)) return null;
+        if (fields[bound] == null || fields[bound] === "") continue;
+        if (typeof fields[bound] !== "string" || !RE_VER.test(fields[bound] as string)) return null;
 
-        n[k] = o[k] as string;
+        notice[bound] = fields[bound] as string;
     }
 
-    if (n.from && n.to && verCmp(n.from, n.to) > 0) return null;
-    if (o.link != null && o.link !== "")
+    if (notice.from && notice.to && verCmp(notice.from, notice.to) > 0) return null;
+    if (fields.link != null && fields.link !== "")
     {
-        if (typeof o.link !== "string" || !RE_LINK.test(o.link)) return null;
+        if (typeof fields.link !== "string" || !RE_LINK.test(fields.link)) return null;
 
-        n.link = o.link;
+        notice.link = fields.link;
     }
 
-    if (o.until != null)
+    if (fields.until != null)
     {
-        if (typeof o.until !== "number" || !Number.isInteger(o.until) || o.until <= 0) return null;
+        if (typeof fields.until !== "number" || !Number.isInteger(fields.until) || fields.until <= 0) return null;
 
-        n.until = o.until;
+        notice.until = fields.until;
     }
 
-    return n;
+    return notice;
 }
 
 /** The stored list, checked: bad entries and repeated ids are dropped, at most MAX_NOTICES kept. */
@@ -113,14 +116,14 @@ export function parseNotices(raw: string | null | undefined): Notice[]
     const out: Notice[] = [];
     const seen = new Set<string>();
 
-    for (const v of list)
+    for (const entry of list)
     {
-        const n = checkNotice(v);
+        const notice = checkNotice(entry);
 
-        if (!n || seen.has(n.id)) continue;
+        if (!notice || seen.has(notice.id)) continue;
 
-        seen.add(n.id);
-        out.push(n);
+        seen.add(notice.id);
+        out.push(notice);
 
         if (out.length >= MAX_NOTICES) break;
     }
@@ -129,7 +132,7 @@ export function parseNotices(raw: string | null | undefined): Notice[]
 }
 
 /** What /v1/meta hands out: everything still current. The app picks the ones for its version. */
-export function activeNotices(raw: string | null | undefined, t: number): Notice[]
+export function activeNotices(raw: string | null | undefined, currentTime: number): Notice[]
 {
-    return parseNotices(raw).filter((n) => n.until == null || n.until > t);
+    return parseNotices(raw).filter((notice) => notice.until == null || notice.until > currentTime);
 }

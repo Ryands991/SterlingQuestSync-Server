@@ -15,6 +15,7 @@ export const ID = /^[0-9a-f]{16}$/;
 
 export class AdminError extends Error {}
 
+// The D1 database name from wrangler.toml.
 function dbName(): string
 {
     if (process.env.SQS_ADMIN_TEST_CONFIG) return "test";
@@ -23,9 +24,9 @@ function dbName(): string
         throw new AdminError("No wrangler.toml here. Copy wrangler.example.toml to wrangler.toml and fill it in first.");
     }
 
-    const m = /database_name\s*=\s*"([^"]+)"/.exec(readFileSync("wrangler.toml", "utf8"));
+    const match = /database_name\s*=\s*"([^"]+)"/.exec(readFileSync("wrangler.toml", "utf8"));
 
-    return m ? m[1] : "sterling-quest-sync";
+    return match ? match[1] : "sterling-quest-sync";
 }
 
 /** The owner's tokens live outside the repo (and outside any synced folder): ~/.sterling-admin/admin.env. */
@@ -36,6 +37,7 @@ export function adminEnvPath(): string
 
 let envLoaded = false;
 
+// Loads the owner's admin settings file once, without overriding real variables.
 export function loadAdminEnv(): void
 {
     if (envLoaded) return;
@@ -48,9 +50,9 @@ export function loadAdminEnv(): void
 
         for (const line of readFileSync(path, "utf8").split(/\r?\n/))
         {
-            const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
+            const match = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
 
-            if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^"|"$/g, "");
+            if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^"|"$/g, "");
         }
     }
 }
@@ -63,12 +65,13 @@ export function signIn(): "token" | "login"
     return process.env.CF_D1_TOKEN && process.env.CF_ACCOUNT_ID ? "token" : "login";
 }
 
+// The environment Wrangler runs with: our token if there is one, no metrics.
 function wranglerEnv(): NodeJS.ProcessEnv
 {
     const env: NodeJS.ProcessEnv = { ...process.env, WRANGLER_SEND_METRICS: "false" };
 
     // Wrangler reads CF_* as old spellings of its own settings and warns about them, so it never sees ours.
-    for (const k of ["CF_ACCOUNT_ID", "CF_API_TOKEN", "CF_D1_TOKEN"]) delete env[k];
+    for (const name of ["CF_ACCOUNT_ID", "CF_API_TOKEN", "CF_D1_TOKEN"]) delete env[name];
 
     if (signIn() === "token")
     {
@@ -105,9 +108,9 @@ function parseWranglerJson(raw: string): any
         try { return JSON.parse(text.slice(i, end + 1)); } catch { /* try the next bracket */ }
     }
 
-    const a = text.indexOf("{"), b = text.lastIndexOf("}");
+    const first = text.indexOf("{"), last = text.lastIndexOf("}");
 
-    if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b + 1)); } catch { /* none */ } }
+    if (first >= 0 && last > first) { try { return JSON.parse(text.slice(first, last + 1)); } catch { /* none */ } }
 
     return undefined;
 }
@@ -115,37 +118,40 @@ function parseWranglerJson(raw: string): any
 /** The line of Wrangler's output that says what went wrong, without colour codes. */
 function wranglerError(text: string): string
 {
-    const lines = text.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const lines = text.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     // Warnings are never the reason it failed: skip them and everything that belongs to them.
-    const useful = lines.filter((l) => !/^▲|\[WARNING\]|deprecated|Logs were written|^🪵|^-+$/i.test(l));
-    const i = useful.findIndex((l) => /ERROR|✘/.test(l));
-    const pick = i >= 0 ? useful.slice(i, i + 3) : useful.slice(-2);
+    const useful = lines.filter((line) => !/^▲|\[WARNING\]|deprecated|Logs were written|^🪵|^-+$/i.test(line));
+    const errorAt = useful.findIndex((line) => /ERROR|✘/.test(line));
+    const pick = errorAt >= 0 ? useful.slice(errorAt, errorAt + 3) : useful.slice(-2);
 
     return (pick.join(" ").replace(/✘\s*\[ERROR\]\s*/g, "") || "Wrangler failed.").slice(0, 400);
 }
 
+// Runs SQL on the live database and returns all rows.
 export async function d1(sql: string): Promise<any[]>
 {
     return (await d1Sets(sql)).flat();
 }
 
+// The Worker's name from wrangler.toml.
 function wranglerName(): string
 {
     if (process.env.SQS_ADMIN_TEST_CONFIG) return "sterling-quest-sync-test";
 
-    const m = existsSync("wrangler.toml") ? /^name\s*=\s*"([^"]+)"/m.exec(readFileSync("wrangler.toml", "utf8")) : null;
+    const match = existsSync("wrangler.toml") ? /^name\s*=\s*"([^"]+)"/m.exec(readFileSync("wrangler.toml", "utf8")) : null;
 
-    return m ? m[1] : "sterling-quest-sync";
+    return match ? match[1] : "sterling-quest-sync";
 }
 
+// The server's public address from wrangler.toml's route.
 function serverUrl(): string | null
 {
     if (process.env.SQS_ADMIN_TEST_URL) return process.env.SQS_ADMIN_TEST_URL;
     if (!existsSync("wrangler.toml")) return null;
 
-    const m = /pattern\s*=\s*"([^"/*]+)"/.exec(readFileSync("wrangler.toml", "utf8"));
+    const match = /pattern\s*=\s*"([^"/*]+)"/.exec(readFileSync("wrangler.toml", "utf8"));
 
-    return m ? "https://" + m[1] : null;
+    return match ? "https://" + match[1] : null;
 }
 
 /**
@@ -169,18 +175,18 @@ export function d1Sets(sql: string): Promise<any[][]>
 
     return new Promise((resolve, reject) =>
     {
-        const p = wrangler(["d1", "execute", dbName(), ...target(), "--json", "--command", oneLine]);
+        const child = wrangler(["d1", "execute", dbName(), ...target(), "--json", "--command", oneLine]);
         let out = "";
         let err = "";
 
-        p.stdout.on("data", (d) => (out += d));
-        p.stderr.on("data", (d) => (err += d));
-        p.on("error", (e) =>
+        child.stdout.on("data", (chunk) => (out += chunk));
+        child.stderr.on("data", (chunk) => (err += chunk));
+        child.on("error", (error) =>
         {
-            reject(new AdminError("Couldn't start Wrangler: " + e.message));
+            reject(new AdminError("Couldn't start Wrangler: " + error.message));
         });
 
-        p.on("close", (code) =>
+        child.on("close", (code) =>
         {
             if (code !== 0)
             {
@@ -198,19 +204,19 @@ export function d1Sets(sql: string): Promise<any[][]>
 
             if (parsed === undefined)
             {
-                const hint = out.replace(/\x1b\[[0-9;]*m/g, "").trim().split(/\r?\n/).filter((l) => l.trim()).slice(0, 2).join(" ").slice(0, 200);
+                const hint = out.replace(/\x1b\[[0-9;]*m/g, "").trim().split(/\r?\n/).filter((line) => line.trim()).slice(0, 2).join(" ").slice(0, 200);
 
                 return reject(new AdminError("Couldn't read Wrangler's answer" + (hint ? ": " + hint : ".")));
             }
 
             const sets = Array.isArray(parsed) ? parsed : [parsed];
 
-            if (sets.some((x: any) => x && x.success === false))
+            if (sets.some((set: any) => set && set.success === false))
             {
-                return reject(new AdminError("The database refused the query: " + JSON.stringify(sets.find((x: any) => x?.success === false)?.errors ?? "").slice(0, 200)));
+                return reject(new AdminError("The database refused the query: " + JSON.stringify(sets.find((set: any) => set?.success === false)?.errors ?? "").slice(0, 200)));
             }
 
-            resolve(sets.map((x: any) => x?.results ?? []));
+            resolve(sets.map((set: any) => set?.results ?? []));
         });
     });
 }
@@ -226,6 +232,7 @@ export interface AccountRow
     banned: boolean;
 }
 
+// Every account, newest first, for the Accounts page.
 export async function accounts(): Promise<AccountRow[]>
 {
     const rows = await d1(`
@@ -234,29 +241,30 @@ export async function accounts(): Promise<AccountRow[]>
       (SELECT GROUP_CONCAT(c.name, ', ') FROM characters c WHERE c.account_id = a.id) AS characters,
       (SELECT COUNT(*) FROM pairings p WHERE p.ended_at IS NULL AND (p.a_account = a.id OR p.b_account = a.id)) AS pairings
     FROM accounts a ORDER BY a.last_seen DESC LIMIT 200;`);
-    return rows.map((r) =>
+    return rows.map((row) =>
     ({
-        account: String(r.id),
-        characters: String(r.characters || ""),
-        pairings: Number(r.pairings),
-        pcs: Number(r.pcs),
-        created: Number(r.created_at),
-        last_seen: Number(r.last_seen),
-        banned: !!r.banned,
+        account: String(row.id),
+        characters: String(row.characters || ""),
+        pairings: Number(row.pairings),
+        pcs: Number(row.pcs),
+        created: Number(row.created_at),
+        last_seen: Number(row.last_seen),
+        banned: !!row.banned,
     }));
 }
 
-export async function ban(id: string, on: boolean): Promise<string>
+// Bans or unbans an account.
+export async function ban(id: string, banned: boolean): Promise<string>
 {
     if (!ID.test(id)) throw new AdminError("Account ids are 16 characters, 0-9 and a-f.");
 
-    const t = Math.floor(Date.now() / 1000);
+    const currentTime = Math.floor(Date.now() / 1000);
 
-    if (on)
+    if (banned)
     {
         await d1(`
       UPDATE accounts SET banned = 1 WHERE id = '${id}';
-      UPDATE pairings SET ended_at = ${t}, ended_reason = 'banned' WHERE ended_at IS NULL AND (a_account = '${id}' OR b_account = '${id}');
+      UPDATE pairings SET ended_at = ${currentTime}, ended_reason = 'banned' WHERE ended_at IS NULL AND (a_account = '${id}' OR b_account = '${id}');
       DELETE FROM slots WHERE account_id = '${id}';
       DELETE FROM pair_codes WHERE account_id = '${id}';
       DELETE FROM link_codes WHERE account_id = '${id}';
@@ -269,6 +277,7 @@ export async function ban(id: string, on: boolean): Promise<string>
     return `Unbanned ${id}. Old pairings stay ended; they can pair again with new codes.`;
 }
 
+// Sets sign-ups to open or invite only.
 export async function signups(mode: string): Promise<string>
 {
     if (mode !== "on" && mode !== "off") throw new AdminError("Sign-ups can only be on or off.");
@@ -282,13 +291,15 @@ export async function signups(mode: string): Promise<string>
 // The one place free text goes into the database. It's checked with the server's own rules, then
 // written as a hex literal, so nothing typed can ever change the SQL around it.
 
+// The notices stored on the server.
 export async function notices(): Promise<Notice[]>
 {
-    const [r] = await d1(`SELECT v FROM settings WHERE k = 'notices';`);
+    const [stored] = await d1(`SELECT v FROM settings WHERE k = 'notices';`);
 
-    return parseNotices(r ? String(r.v) : null);
+    return parseNotices(stored ? String(stored.v) : null);
 }
 
+// Writes the notice list back to the server.
 async function saveNotices(list: Notice[]): Promise<void>
 {
     const hex = Buffer.from(JSON.stringify(list), "utf8").toString("hex");
@@ -298,11 +309,12 @@ async function saveNotices(list: Notice[]): Promise<void>
     await d1(`INSERT INTO settings (k, v) VALUES ('notices', CAST(X'${hex}' AS TEXT)) ON CONFLICT (k) DO UPDATE SET v = excluded.v;`);
 }
 
+// Adds a notice after the same checks the server uses.
 export async function addNotice(fields: Record<string, unknown>): Promise<string>
 {
     const list = await notices();
     const now = Math.floor(Date.now() / 1000);
-    const live = list.filter((n) => n.until == null || n.until > now);
+    const live = list.filter((notice) => notice.until == null || notice.until > now);
 
     if (live.length >= MAX_NOTICES) throw new AdminError(`There can be up to ${MAX_NOTICES} notices. Remove one first.`);
 
@@ -319,9 +331,9 @@ export async function addNotice(fields: Record<string, unknown>): Promise<string
         until: Number.isInteger(days) && days > 0 && days <= 365 ? now + days * 86400 : undefined,
     };
 
-    const n = checkNotice(raw);
+    const notice = checkNotice(raw);
 
-    if (!n)
+    if (!notice)
     {
         throw new AdminError
         (
@@ -330,20 +342,21 @@ export async function addNotice(fields: Record<string, unknown>): Promise<string
         );
     }
 
-    await saveNotices([...live, n]);
+    await saveNotices([...live, notice]);
 
     return "Posted. Apps pick it up within a few hours, or right away when they start.";
 }
 
+// Removes a notice by id.
 export async function removeNotice(id: string): Promise<string>
 {
     if (!/^[a-z0-9-]{1,24}$/.test(id)) throw new AdminError("That isn't a notice id.");
 
     const list = await notices();
 
-    if (!list.some((n) => n.id === id)) throw new AdminError("That notice is already gone.");
+    if (!list.some((notice) => notice.id === id)) throw new AdminError("That notice is already gone.");
 
-    await saveNotices(list.filter((n) => n.id !== id));
+    await saveNotices(list.filter((notice) => notice.id !== id));
 
     return "Removed. Apps stop showing it at their next check.";
 }
@@ -360,9 +373,10 @@ export interface Stats
     usage_note: string | null;
 }
 
+// Totals for the command-line stats job.
 export async function stats(): Promise<Stats>
 {
-    const [c] = await d1(`
+    const [counts] = await d1(`
     SELECT (SELECT COUNT(*) FROM accounts) AS accounts,
       (SELECT COUNT(*) FROM accounts WHERE last_seen > strftime('%s','now') - 86400) AS active_today,
       (SELECT COUNT(*) FROM pairings WHERE ended_at IS NULL) AS pairings,
@@ -371,12 +385,12 @@ export async function stats(): Promise<Stats>
       (SELECT v FROM settings WHERE k = 'signups') AS signups;`);
     const db =
     {
-        accounts: Number(c.accounts),
-        active_today: Number(c.active_today),
-        pairings: Number(c.pairings),
-        slots: Number(c.slots),
-        packet_bytes: Number(c.packet_bytes),
-        signups: String(c.signups),
+        accounts: Number(counts.accounts),
+        active_today: Number(counts.active_today),
+        pairings: Number(counts.pairings),
+        slots: Number(counts.slots),
+        packet_bytes: Number(counts.packet_bytes),
+        signups: String(counts.signups),
     };
 
     loadAdminEnv();
@@ -391,28 +405,29 @@ export async function stats(): Promise<Stats>
 
     try
     {
-        const u = await fetchUsage(acct, token);
-        const p = percentages(u);
+        const usage = await fetchUsage(acct, token);
+        const percent = percentages(usage);
 
         return {
             db,
             usage:
             {
-                date: u.date,
+                date: usage.date,
                 rows:
                 [
-                    { name: "Requests", used: u.requests, limit: FREE_LIMITS.requests, percent: p.requests },
-                    { name: "D1 rows read", used: u.rowsRead, limit: FREE_LIMITS.rowsRead, percent: p.rowsRead },
-                    { name: "D1 rows written", used: u.rowsWritten, limit: FREE_LIMITS.rowsWritten, percent: p.rowsWritten },
+                    { name: "Requests", used: usage.requests, limit: FREE_LIMITS.requests, percent: percent.requests },
+                    { name: "D1 rows read", used: usage.rowsRead, limit: FREE_LIMITS.rowsRead, percent: percent.rowsRead },
+                    { name: "D1 rows written", used: usage.rowsWritten, limit: FREE_LIMITS.rowsWritten, percent: percent.rowsWritten },
                 ],
             },
 
             usage_note: null,
         };
     }
-    catch (e)
+
+    catch (error)
     {
-        return { db, usage: null, usage_note: "Couldn't load today's usage: " + (e as Error).message };
+        return { db, usage: null, usage_note: "Couldn't load today's usage: " + (error as Error).message };
     }
 }
 
@@ -434,31 +449,34 @@ export interface Overview
     warnings: Warning[];
 }
 
+// Asks the live server for /v1/meta and times the answer.
 async function serverCheck(): Promise<Overview["server"]>
 {
     const url = serverUrl();
 
     if (!url) return { ok: false, ms: null, api: null, min_app: null, signups: null, error: "No server address in wrangler.toml.", url };
 
-    const t0 = Date.now();
+    const startedAt = Date.now();
 
     try
     {
-        const r = await fetch(url + "/v1/meta", { signal: AbortSignal.timeout(8000) });
-        const ms = Date.now() - t0;
+        const response = await fetch(url + "/v1/meta", { signal: AbortSignal.timeout(8000) });
+        const elapsedMs = Date.now() - startedAt;
 
-        if (!r.ok) return { ok: false, ms, api: null, min_app: null, signups: null, error: "Server answered " + r.status, url };
+        if (!response.ok) return { ok: false, ms: elapsedMs, api: null, min_app: null, signups: null, error: "Server answered " + response.status, url };
 
-        const m = (await r.json()) as any;
+        const meta = (await response.json()) as any;
 
-        return { ok: true, ms, api: Number(m.api), min_app: String(m.min_app), signups: String(m.signups), error: null, url };
+        return { ok: true, ms: elapsedMs, api: Number(meta.api), min_app: String(meta.min_app), signups: String(meta.signups), error: null, url };
     }
-    catch (e)
+
+    catch (error)
     {
-        return { ok: false, ms: null, api: null, min_app: null, signups: null, error: "Can't reach the server: " + (e as Error).message, url };
+        return { ok: false, ms: null, api: null, min_app: null, signups: null, error: "Can't reach the server: " + (error as Error).message, url };
     }
 }
 
+// Everything the Overview page shows, in one go.
 export async function overview(): Promise<Overview>
 {
     const DAY = 86400;
@@ -493,37 +511,37 @@ export async function overview(): Promise<Overview>
         WHERE last_seen > ${now - 30 * DAY} GROUP BY app_version ORDER BY pcs DESC LIMIT 12;`),
     ]);
 
-    const [c] = sets[0];
-    const [k] = sets[1];
-    const [p] = sets[2];
-    const [i] = sets[3] ?? [{}];
+    const [accountStats] = sets[0];
+    const [keyStats] = sets[1];
+    const [pairingStats] = sets[2];
+    const [installStats] = sets[3] ?? [{}];
     const out: Overview =
     {
         server: srv,
         db:
         {
-            accounts: Number(c.accounts), active_today: Number(c.active_today), pairings: Number(c.pairings), slots: Number(c.slots),
-            packet_bytes: Number(c.packet_bytes), signups: String(c.signups), new_24h: Number(c.new_24h), new_7d: Number(c.new_7d),
-            unpaired_new: Number(c.unpaired_new),
+            accounts: Number(accountStats.accounts), active_today: Number(accountStats.active_today), pairings: Number(accountStats.pairings), slots: Number(accountStats.slots),
+            packet_bytes: Number(accountStats.packet_bytes), signups: String(accountStats.signups), new_24h: Number(accountStats.new_24h), new_7d: Number(accountStats.new_7d),
+            unpaired_new: Number(accountStats.unpaired_new),
         },
 
         cron:
         {
-            last: k.cron_last ? Number(k.cron_last) : null,
-            cleanup_last: k.cleanup_last ? Number(k.cleanup_last) : null,
-            last_alert: k.last_alert ? String(k.last_alert).slice("alerted:".length) : null,
+            last: keyStats.cron_last ? Number(keyStats.cron_last) : null,
+            cleanup_last: keyStats.cleanup_last ? Number(keyStats.cleanup_last) : null,
+            last_alert: keyStats.last_alert ? String(keyStats.last_alert).slice("alerted:".length) : null,
         },
 
         installs:
         {
-            pcs: Number(i.pcs ?? 0), active_7d: Number(i.active_7d ?? 0), active_30d: Number(i.active_30d ?? 0), new_7d: Number(i.new_7d ?? 0),
-            versions: (sets[4] ?? []).map((r: any) => ({ version: String(r.version), pcs: Number(r.pcs) })),
+            pcs: Number(installStats.pcs ?? 0), active_7d: Number(installStats.active_7d ?? 0), active_30d: Number(installStats.active_30d ?? 0), new_7d: Number(installStats.new_7d ?? 0),
+            versions: (sets[4] ?? []).map((row: any) => ({ version: String(row.version), pcs: Number(row.pcs) })),
         },
 
         cleanup_preview:
         {
-            unpaired_accounts: Number(p.unpaired_accounts), idle_accounts: Number(p.idle_accounts), old_copies: Number(p.old_copies),
-            old_pairings: Number(p.old_pairings), expired_codes: Number(p.expired_codes),
+            unpaired_accounts: Number(pairingStats.unpaired_accounts), idle_accounts: Number(pairingStats.idle_accounts), old_copies: Number(pairingStats.old_copies),
+            old_pairings: Number(pairingStats.old_pairings), expired_codes: Number(pairingStats.expired_codes),
         },
 
         usage: null,
@@ -539,57 +557,60 @@ export async function overview(): Promise<Overview>
 
     if (token && acct)
     {
-        const [u, h] = await Promise.allSettled([fetchUsage(acct, token), fetchHealth(acct, token, wranglerName())]);
+        const [usageResult, healthResult] = await Promise.allSettled([fetchUsage(acct, token), fetchHealth(acct, token, wranglerName())]);
 
-        if (u.status === "fulfilled")
+        if (usageResult.status === "fulfilled")
         {
-            const pc = percentages(u.value);
+            const percent = percentages(usageResult.value);
 
             out.usage =
             {
-                date: u.value.date,
+                date: usageResult.value.date,
                 rows:
                 [
-                    { name: "Requests", used: u.value.requests, limit: FREE_LIMITS.requests, percent: pc.requests },
-                    { name: "D1 rows read", used: u.value.rowsRead, limit: FREE_LIMITS.rowsRead, percent: pc.rowsRead },
-                    { name: "D1 rows written", used: u.value.rowsWritten, limit: FREE_LIMITS.rowsWritten, percent: pc.rowsWritten },
+                    { name: "Requests", used: usageResult.value.requests, limit: FREE_LIMITS.requests, percent: percent.requests },
+                    { name: "D1 rows read", used: usageResult.value.rowsRead, limit: FREE_LIMITS.rowsRead, percent: percent.rowsRead },
+                    { name: "D1 rows written", used: usageResult.value.rowsWritten, limit: FREE_LIMITS.rowsWritten, percent: percent.rowsWritten },
                 ],
             };
         }
-        else out.notes.push("Couldn't load today's usage: " + (u.reason as Error).message);
 
-        if (h.status === "fulfilled")
+        else out.notes.push("Couldn't load today's usage: " + (usageResult.reason as Error).message);
+
+        if (healthResult.status === "fulfilled")
         {
-            const v = h.value;
+            const health = healthResult.value;
 
-            out.health = { ...v, error_pct: v.requests ? (v.errors / v.requests) * 100 : 0 };
+            out.health = { ...health, error_pct: health.requests ? (health.errors / health.requests) * 100 : 0 };
         }
-        else out.notes.push("Couldn't load errors and CPU time: " + (h.reason as Error).message);
+
+        else out.notes.push("Couldn't load errors and CPU time: " + (healthResult.reason as Error).message);
     }
+
     else
     {
         out.notes.push("For today's usage, errors and CPU time, set up the admin token: double-click set-admin-token.cmd in this folder.");
     }
 
     // Warnings, each with what to do. Gold in the window.
-    const w = out.warnings;
+    const warnings = out.warnings;
 
-    if (!srv.ok) w.push({ text: srv.error || "The server isn't answering.", fix: "Check the Worker in the Cloudflare dashboard, then deploy again with deploy.cmd." });
-    if (out.cron.last === null) w.push({ text: "The hourly job has never recorded a run.", fix: "Normal right after this update is deployed. If it stays empty for 2 hours, check Triggers on the Worker in Cloudflare." });
+    if (!srv.ok) warnings.push({ text: srv.error || "The server isn't answering.", fix: "Check the Worker in the Cloudflare dashboard, then deploy again with deploy.cmd." });
+    if (out.cron.last === null) warnings.push({ text: "The hourly job has never recorded a run.", fix: "Normal right after this update is deployed. If it stays empty for 2 hours, check Triggers on the Worker in Cloudflare." });
 
-    else if (now - out.cron.last > 2 * 3600) w.push({ text: "The hourly job hasn't run for " + Math.round((now - out.cron.last) / 3600) + " hours, so no usage alert emails.", fix: "Check Triggers on the Worker in the Cloudflare dashboard." });
+    else if (now - out.cron.last > 2 * 3600) warnings.push({ text: "The hourly job hasn't run for " + Math.round((now - out.cron.last) / 3600) + " hours, so no usage alert emails.", fix: "Check Triggers on the Worker in the Cloudflare dashboard." });
 
-    if (out.cron.cleanup_last !== null && now - out.cron.cleanup_last > 2 * DAY) w.push({ text: "The daily cleanup hasn't run for " + Math.round((now - out.cron.cleanup_last) / DAY) + " days.", fix: "Check Triggers on the Worker in the Cloudflare dashboard." });
+    if (out.cron.cleanup_last !== null && now - out.cron.cleanup_last > 2 * DAY) warnings.push({ text: "The daily cleanup hasn't run for " + Math.round((now - out.cron.cleanup_last) / DAY) + " days.", fix: "Check Triggers on the Worker in the Cloudflare dashboard." });
 
-    for (const r of out.usage?.rows ?? []) if (r.percent >= 50) w.push({ text: `${r.name} is at ${r.percent.toFixed(0)}% of today's free limit.`, fix: "It resets at 00:00 UTC. If it keeps happening, turn on Workers Paid ($5) in Cloudflare." });
+    for (const row of out.usage?.rows ?? []) if (row.percent >= 50) warnings.push({ text: `${row.name} is at ${row.percent.toFixed(0)}% of today's free limit.`, fix: "It resets at 00:00 UTC. If it keeps happening, turn on Workers Paid ($5) in Cloudflare." });
 
     if (out.health)
     {
-        if (out.health.cpuP99 >= 7) w.push({ text: `Slowest requests use ${out.health.cpuP99.toFixed(1)} ms of CPU (free limit 10 ms).`, fix: "Requests over 10 ms fail on the free plan. Tell Claude, or turn on Workers Paid." });
-        if (out.health.requests >= 50 && out.health.error_pct >= 5) w.push({ text: `${out.health.error_pct.toFixed(0)}% of today's requests ended in a server error.`, fix: "Look at the Worker's logs in the Cloudflare dashboard and tell Claude what they say." });
+        if (out.health.cpuP99 >= 7) warnings.push({ text: `Slowest requests use ${out.health.cpuP99.toFixed(1)} ms of CPU (free limit 10 ms).`, fix: "Requests over 10 ms fail on the free plan. Tell Claude, or turn on Workers Paid." });
+        if (out.health.requests >= 50 && out.health.error_pct >= 5) warnings.push({ text: `${out.health.error_pct.toFixed(0)}% of today's requests ended in a server error.`, fix: "Look at the Worker's logs in the Cloudflare dashboard and tell Claude what they say." });
     }
 
-    if (out.db.new_24h >= 20 && out.db.signups === "open") w.push({ text: `${out.db.new_24h} new accounts in the last 24 hours.`, fix: "If you don't know where they came from, close sign-ups on the Sign-ups page." });
+    if (out.db.new_24h >= 20 && out.db.signups === "open") warnings.push({ text: `${out.db.new_24h} new accounts in the last 24 hours.`, fix: "If you don't know where they came from, close sign-ups on the Sign-ups page." });
 
     return out;
 }
@@ -602,6 +623,7 @@ export function backupDir(): string
     return process.env.SQS_ADMIN_BACKUP_DIR || join(homedir(), "Sterling Admin Backups");
 }
 
+// Exports the live database to a dated .sql file.
 export function backup(): Promise<{ file: string; dir: string }>
 {
     const dir = backupDir();
@@ -613,13 +635,13 @@ export function backup(): Promise<{ file: string; dir: string }>
 
     return new Promise((resolve, reject) =>
     {
-        const p = wrangler(["d1", "export", dbName(), ...target(true), "--output", file]);
+        const child = wrangler(["d1", "export", dbName(), ...target(true), "--output", file]);
         let err = "";
 
-        p.stderr.on("data", (d) => (err += d));
-        p.stdout.on("data", (d) => (err += d));
-        p.on("error", (e) => reject(new AdminError("Couldn't start Wrangler: " + e.message)));
-        p.on("close", (code) =>
+        child.stderr.on("data", (chunk) => (err += chunk));
+        child.stdout.on("data", (chunk) => (err += chunk));
+        child.on("error", (error) => reject(new AdminError("Couldn't start Wrangler: " + error.message)));
+        child.on("close", (code) =>
         {
             if (code !== 0 || !existsSync(file)) return reject(new AdminError("Backup failed: " + wranglerError(err)));
 

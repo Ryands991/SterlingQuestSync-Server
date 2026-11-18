@@ -37,6 +37,7 @@ let lastSeen = Date.now();
 let seenPage = false;
 let origin = "";
 
+// Sends a response with the strict headers every reply gets.
 function send(res: ServerResponse, status: number, body: string | Buffer, type = "application/json; charset=utf-8")
 {
     res.writeHead(status,
@@ -51,8 +52,10 @@ function send(res: ServerResponse, status: number, body: string | Buffer, type =
     res.end(body);
 }
 
-const json = (res: ServerResponse, status: number, v: unknown) => send(res, status, JSON.stringify(v));
+// Sends a value as JSON.
+const json = (res: ServerResponse, status: number, value: unknown) => send(res, status, JSON.stringify(value));
 
+// Checks this launch's key in constant time.
 function keyOk(req: IncomingMessage): boolean
 {
     const got = Buffer.from(String(req.headers["x-admin-key"] || ""));
@@ -61,27 +64,29 @@ function keyOk(req: IncomingMessage): boolean
     return got.length === want.length && timingSafeEqual(got, want);
 }
 
+// The request body as a small JSON object; anything else is empty.
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>>
 {
     return new Promise((resolve) =>
     {
-        let s = "";
+        let body = "";
 
-        req.on("data", (d) =>
+        req.on("data", (chunk) =>
         {
-            s += d;
+            body += chunk;
 
-            if (s.length > 4096) req.destroy();
+            if (body.length > 4096) req.destroy();
         });
 
         req.on("end", () =>
         {
             try
             {
-                const v = JSON.parse(s || "{}");
+                const parsed = JSON.parse(body || "{}");
 
-                resolve(v && typeof v === "object" && !Array.isArray(v) ? v : {});
+                resolve(parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {});
             }
+
             catch
             {
                 resolve({});
@@ -96,11 +101,11 @@ const JOBS: Record<string, (b: Record<string, unknown>) => Promise<unknown>> =
     overview: async () => ({ ...(await overview()), sign_in: signIn() }),
     backup: async () =>
     {
-        const r = await backup();
+        const result = await backup();
 
-        openFolder(r.dir);
+        openFolder(result.dir);
 
-        return { message: "Saved " + r.file };
+        return { message: "Saved " + result.file };
     },
 
     openbackups: async () =>
@@ -111,12 +116,12 @@ const JOBS: Record<string, (b: Record<string, unknown>) => Promise<unknown>> =
     },
 
     accounts: () => accounts(),
-    ban: (b) => ban(String(b.id ?? ""), true).then((message) => ({ message })),
-    unban: (b) => ban(String(b.id ?? ""), false).then((message) => ({ message })),
-    signups: (b) => signups(String(b.mode ?? "")).then((message) => ({ message })),
+    ban: (fields) => ban(String(fields.id ?? ""), true).then((message) => ({ message })),
+    unban: (fields) => ban(String(fields.id ?? ""), false).then((message) => ({ message })),
+    signups: (fields) => signups(String(fields.mode ?? "")).then((message) => ({ message })),
     notices: () => notices(),
-    addnotice: (b) => addNotice(b).then((message) => ({ message })),
-    removenotice: (b) => removeNotice(String(b.id ?? "")).then((message) => ({ message })),
+    addnotice: (fields) => addNotice(fields).then((message) => ({ message })),
+    removenotice: (fields) => removeNotice(String(fields.id ?? "")).then((message) => ({ message })),
     ping: async () => ({ ok: true }),
 };
 
@@ -140,9 +145,9 @@ const server = createServer(async (req, res) =>
         return send(res, 200, readFileSync(path), type);
     }
 
-    const m = /^\/api\/([a-z]+)$/.exec(url.pathname);
+    const match = /^\/api\/([a-z]+)$/.exec(url.pathname);
 
-    if (req.method !== "POST" || !m || !JOBS[m[1]]) return send(res, 404, "not found", "text/plain");
+    if (req.method !== "POST" || !match || !JOBS[match[1]]) return send(res, 404, "not found", "text/plain");
     if (req.headers.origin && req.headers.origin !== origin) return json(res, 403, { error: "Wrong origin." });
     if (!keyOk(req)) return json(res, 403, { error: "This window's key doesn't match. Close it and start Sterling Admin again." });
 
@@ -150,14 +155,16 @@ const server = createServer(async (req, res) =>
 
     try
     {
-        json(res, 200, await JOBS[m[1]](await readBody(req)));
+        json(res, 200, await JOBS[match[1]](await readBody(req)));
     }
-    catch (e)
+
+    catch (error)
     {
-        json(res, 400, { error: e instanceof AdminError ? e.message : "Something went wrong: " + (e as Error).message });
+        json(res, 400, { error: error instanceof AdminError ? error.message : "Something went wrong: " + (error as Error).message });
     }
 });
 
+// Opens a folder in Explorer (or Finder).
 function openFolder(dir: string)
 {
     if (process.env.SQS_ADMIN_NO_WINDOW) return;
@@ -169,19 +176,21 @@ function openFolder(dir: string)
     spawn(cmd, [dir], { stdio: "ignore", detached: true });
 }
 
+// Opens the admin page in its own window.
 function openWindow(url: string)
 {
     if (process.env.SQS_ADMIN_NO_WINDOW) return;
     if (process.platform === "win32")
     {
         // Edge's app mode gives a plain window with no tabs or address bar. Falls back to the default browser.
-        const p = spawn("cmd", ["/c", "start", "", "msedge", `--app=${url}`, "--window-size=960,700"], { stdio: "ignore", detached: true });
+        const browser = spawn("cmd", ["/c", "start", "", "msedge", `--app=${url}`, "--window-size=960,700"], { stdio: "ignore", detached: true });
 
-        p.on("exit", (code) =>
+        browser.on("exit", (code) =>
         {
             if (code) spawn("cmd", ["/c", "start", "", url], { stdio: "ignore", detached: true });
         });
     }
+
     else
     {
         spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], { stdio: "ignore", detached: true });

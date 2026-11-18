@@ -330,6 +330,15 @@ function blankLines(text, file)
                 const ends = pc >= 0 && ";}".includes(p.text[pc]);
 
                 if (indentOf(p.text) === ind && ends && !CLOSERS.includes(firstChar(p))) prev = kind(p.text);
+                else if (indentOf(p.text) === ind && ends)
+                {
+                    // the statement above ends on a closer line ("]);", ").bind(x);"): find where it started
+                    let q = j;
+
+                    while (q >= 0 && (!out[q].text.trim() || indentOf(out[q].text) > ind || (indentOf(out[q].text) === ind && "{[()]}".includes(firstChar(out[q]) || "x")))) q--;
+
+                    if (q >= 0 && indentOf(out[q].text) === ind && !isComment(out[q])) prev = kind(out[q].text);
+                }
                 else if (indentOf(p.text) > ind && ends)
                 {
                     let q = j;

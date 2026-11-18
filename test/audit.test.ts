@@ -164,6 +164,7 @@ describe("codes are single use even in a race", () =>
 
             expect([r1.status, r2.status].sort()).toEqual([201, 403]);
         }
+
         finally
         {
             await env.DB.prepare("UPDATE settings SET v = 'open' WHERE k = 'signups'").run();

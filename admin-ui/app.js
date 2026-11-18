@@ -201,6 +201,7 @@ async function loadOverview()
             ["Expired codes", fmt(c.expired_codes)],
         ]);
     }
+
     catch (e) { fail(e); }
     $("ov-loading").hidden = true;
 }
@@ -240,6 +241,7 @@ async function loadAccounts()
 
                 act.append(b);
             }
+
             else
             {
                 const b = el("button", "btn bad", "Ban..."); b.type = "button";
@@ -258,6 +260,7 @@ async function loadAccounts()
             tr.append(act); body.append(tr);
         }
     }
+
     catch (e) { fail(e); }
 }
 
@@ -355,6 +358,7 @@ async function loadNotices()
             box.append(b); list.append(box);
         }
     }
+
     catch (e) { fail(e); }
 }
 

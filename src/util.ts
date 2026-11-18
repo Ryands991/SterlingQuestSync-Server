@@ -28,6 +28,7 @@ export class HttpError extends Error
     }
 }
 
+// A JSON response that's never cached.
 export function json(data: unknown, status = 200): Response
 {
     return new Response(JSON.stringify(data),
@@ -42,33 +43,38 @@ export function json(data: unknown, status = 200): Response
     });
 }
 
+// Stops the request with an HTTP error code.
 export function fail(status: number, code: string): never
 {
     throw new HttpError(status, code);
 }
 
+// Unix time in seconds.
 export function now(): number
 {
     return Math.floor(Date.now() / 1000);
 }
 
-function randomBytes(n: number): Uint8Array
+// Secure random bytes.
+function randomBytes(count: number): Uint8Array
 {
-    const b = new Uint8Array(n);
+    const bytes = new Uint8Array(count);
 
-    crypto.getRandomValues(b);
+    crypto.getRandomValues(bytes);
 
-    return b;
+    return bytes;
 }
 
+// Secure random hex, for ids.
 export function randomHex(bytes: number): string
 {
-    return [...randomBytes(bytes)].map((x) => x.toString(16).padStart(2, "0")).join("");
+    return [...randomBytes(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 // Codes people type: no 0/O, 1/I/L, U. 30 symbols, about 4.9 bits each (12 symbols is about 59 bits).
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789";
 
+// A random code from the typeable alphabet.
 export function randomCode(len: number): string
 {
     // Rejection sampling so every symbol is equally likely.
@@ -77,15 +83,16 @@ export function randomCode(len: number): string
 
     while (out.length < len)
     {
-        for (const b of randomBytes(len * 2))
+        for (const byte of randomBytes(len * 2))
         {
-            if (b < max && out.length < len) out.push(CODE_ALPHABET[b % CODE_ALPHABET.length]);
+            if (byte < max && out.length < len) out.push(CODE_ALPHABET[byte % CODE_ALPHABET.length]);
         }
     }
 
     return out.join("");
 }
 
+// "ABCDEFGH" as "ABCD-EFGH", easier to read out.
 export function groupCode(code: string): string
 {
     return code.match(/.{1,4}/g)!.join("-");
@@ -96,20 +103,21 @@ export function normalizeCode(input: unknown, len: number): string | null
 {
     if (typeof input !== "string" || input.length > 64) return null;
 
-    const c = input.toUpperCase().replace(/[\s-]/g, "");
+    const code = input.toUpperCase().replace(/[\s-]/g, "");
 
-    if (c.length !== len) return null;
+    if (code.length !== len) return null;
 
-    for (const ch of c) if (!CODE_ALPHABET.includes(ch)) return null;
+    for (const letter of code) if (!CODE_ALPHABET.includes(letter)) return null;
 
-    return c;
+    return code;
 }
 
+// SHA-256 as hex, for keys and codes we never store in the clear.
 export async function sha256(text: string): Promise<string>
 {
-    const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
 
-    return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 // ---- input checks ----
@@ -122,30 +130,33 @@ export const RE_LABEL = /^[\p{L}\p{N}][\p{L}\p{N} _.'()-]{0,39}$/u;
 export const RE_PACKET = /^[A-Za-z0-9()]+$/;                  // LibDeflate's print alphabet
 export const RE_ID = /^[0-9a-f]{16}$/;
 
-export function guid(v: unknown): string
+// A checked character GUID, or a 400.
+export function guid(value: unknown): string
 {
-    if (typeof v !== "string" || !RE_GUID.test(v)) fail(400, "bad_guid");
+    if (typeof value !== "string" || !RE_GUID.test(value)) fail(400, "bad_guid");
 
-    return v;
+    return value;
 }
 
-export function label(v: unknown, fallback = "PC"): string
+// A checked PC label, or the fallback when none is given.
+export function label(value: unknown, fallback = "PC"): string
 {
-    if (v === undefined || v === null || v === "") return fallback;
-    if (typeof v !== "string") fail(400, "bad_label");
+    if (value === undefined || value === null || value === "") return fallback;
+    if (typeof value !== "string") fail(400, "bad_label");
 
-    const t = v.trim();
+    const trimmed = value.trim();
 
-    if (!RE_LABEL.test(t)) fail(400, "bad_label");
+    if (!RE_LABEL.test(trimmed)) fail(400, "bad_label");
 
-    return t;
+    return trimmed;
 }
 
-export function id(v: unknown): string
+// A checked row id; anything else is simply not found.
+export function id(value: unknown): string
 {
-    if (typeof v !== "string" || !RE_ID.test(v)) fail(404, "not_found");
+    if (typeof value !== "string" || !RE_ID.test(value)) fail(404, "not_found");
 
-    return v;
+    return value;
 }
 
 /** Reads the body, stopping as soon as it passes the cap (a missing or false Content-Length can't get around it). */
@@ -176,12 +187,12 @@ async function readCapped(req: Request): Promise<string>
     }
 
     const all = new Uint8Array(total);
-    let at = 0;
+    let offset = 0;
 
-    for (const c of chunks)
+    for (const chunk of chunks)
     {
-        all.set(c, at);
-        at += c.byteLength;
+        all.set(chunk, offset);
+        offset += chunk.byteLength;
     }
 
     return new TextDecoder().decode(all);
@@ -194,12 +205,14 @@ export function pathPart(raw: string): string
     {
         return decodeURIComponent(raw);
     }
+
     catch
     {
         fail(400, "bad_path");
     }
 }
 
+// The body as a JSON object, within the size cap.
 export async function readJson(req: Request): Promise<Record<string, unknown>>
 {
     const len = Number(req.headers.get("content-length") || "0");
@@ -213,10 +226,11 @@ export async function readJson(req: Request): Promise<Record<string, unknown>>
 
     try
     {
-        const v = JSON.parse(text);
+        const parsed = JSON.parse(text);
 
-        if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
     }
+
     catch
     {
         // fall through
@@ -225,12 +239,13 @@ export async function readJson(req: Request): Promise<Record<string, unknown>>
     fail(400, "bad_json");
 }
 
+// The key from the Authorization header, or a 401.
 export function bearer(req: Request): string
 {
-    const h = req.headers.get("authorization") || "";
-    const m = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(h);
+    const header = req.headers.get("authorization") || "";
+    const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(header);
 
-    if (!m) fail(401, "unauthorized");
+    if (!match) fail(401, "unauthorized");
 
-    return m[1];
+    return match[1];
 }

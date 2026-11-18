@@ -34,11 +34,12 @@ interface Auth
 
 // ---------------------------------------------------------------- helpers
 
-async function limit(rl: RateLimit | undefined, key: string): Promise<void>
+// Rate limits one caller; a missing limiter (local tests) lets everything through.
+async function limit(limiter: RateLimit | undefined, key: string): Promise<void>
 {
-    if (!rl) return;
+    if (!limiter) return;
 
-    const { success } = await rl.limit({ key });
+    const { success } = await limiter.limit({ key });
 
     if (!success) fail(429, "rate_limited");
 }
@@ -46,16 +47,18 @@ async function limit(rl: RateLimit | undefined, key: string): Promise<void>
 /** The Companion app's version from its User-Agent ("SterlingQuestSync/0.1.25"), or null. */
 function appVersion(req: Request): string | null
 {
-    const m = /^SterlingQuestSync\/(\d{1,4}\.\d{1,4}\.\d{1,4})$/.exec(req.headers.get("user-agent") || "");
+    const match = /^SterlingQuestSync\/(\d{1,4}\.\d{1,4}\.\d{1,4})$/.exec(req.headers.get("user-agent") || "");
 
-    return m ? m[1] : null;
+    return match ? match[1] : null;
 }
 
+// The caller's address as Cloudflare saw it, for rate limits.
 function ip(req: Request): string
 {
     return req.headers.get("cf-connecting-ip") || "unknown";
 }
 
+// Turns a bearer key into the account and PC it belongs to, or refuses.
 async function authenticate(req: Request, env: Env): Promise<Auth>
 {
     const key = bearer(req);
@@ -69,24 +72,26 @@ async function authenticate(req: Request, env: Env): Promise<Auth>
         "SELECT k.id AS key_id, k.last_seen AS seen, k.app_version AS ver, a.id AS account, a.banned AS banned " +
             "FROM keys k JOIN accounts a ON a.id = k.account_id WHERE k.hash = ?1",
     ).bind(hash).first<{ key_id: string; seen: number; ver: string | null; account: string; banned: number }>();
+
     if (!row) fail(401, "unknown_key");
     if (row.banned) fail(403, "banned");
 
     await limit(env.RL_API, "k:" + hash.slice(0, 32));
 
-    const t = now();
+    const currentTime = now();
     const ver = appVersion(req);
 
     // Writes are the scarce resource on the free plan, so "last seen" moves at most once a day,
     // and the app version is only written when it changed (after an update).
-    if (row.seen < t - DAY)
+    if (row.seen < currentTime - DAY)
     {
         await env.DB.batch
         ([
-            env.DB.prepare("UPDATE keys SET last_seen = ?1, app_version = COALESCE(?3, app_version) WHERE hash = ?2").bind(t, hash, ver),
-            env.DB.prepare("UPDATE accounts SET last_seen = ?1 WHERE id = ?2").bind(t, row.account),
+            env.DB.prepare("UPDATE keys SET last_seen = ?1, app_version = COALESCE(?3, app_version) WHERE hash = ?2").bind(currentTime, hash, ver),
+            env.DB.prepare("UPDATE accounts SET last_seen = ?1 WHERE id = ?2").bind(currentTime, row.account),
         ]);
     }
+
     else if (ver && ver !== row.ver)
     {
         await env.DB.prepare("UPDATE keys SET app_version = ?1 WHERE hash = ?2").bind(ver, hash).run();
@@ -95,13 +100,15 @@ async function authenticate(req: Request, env: Env): Promise<Auth>
     return { account: row.account, keyHash: hash, keyId: row.key_id };
 }
 
+// Whether new accounts are open to anyone or need an invite.
 async function signups(env: Env): Promise<string>
 {
-    const r = await env.DB.prepare("SELECT v FROM settings WHERE k = 'signups'").first<{ v: string }>();
+    const result = await env.DB.prepare("SELECT v FROM settings WHERE k = 'signups'").first<{ v: string }>();
 
-    return r?.v === "invite" ? "invite" : "open";
+    return result?.v === "invite" ? "invite" : "open";
 }
 
+// A new recovery code to show once, and the hash we keep instead of it.
 async function newRecovery(): Promise<{ code: string; hash: string }>
 {
     const raw = randomCode(20);
@@ -109,29 +116,33 @@ async function newRecovery(): Promise<{ code: string; hash: string }>
     return { code: "SQS-" + groupCode(raw), hash: await sha256("recovery:" + raw) };
 }
 
-async function myCharacter(env: Env, account: string, g: string)
+// One of this account's own characters, or a 404.
+async function myCharacter(env: Env, account: string, characterGuid: string)
 {
-    const c = await env.DB.prepare
+    const character = await env.DB.prepare
     (
         "SELECT guid, name, realm FROM characters WHERE account_id = ?1 AND guid = ?2",
-    ).bind(account, g).first<{ guid: string; name: string; realm: string }>();
-    if (!c) fail(404, "character_not_listed");
+    ).bind(account, characterGuid).first<{ guid: string; name: string; realm: string }>();
 
-    return c;
+    if (!character) fail(404, "character_not_listed");
+
+    return character;
 }
 
-async function activePartners(env: Env, account: string, g: string): Promise<number>
+// How many live pairings a character has, to enforce the partner cap.
+async function activePartners(env: Env, account: string, characterGuid: string): Promise<number>
 {
-    const r = await env.DB.prepare
+    const result = await env.DB.prepare
     (
         "SELECT COUNT(*) AS n FROM pairings WHERE ended_at IS NULL AND " +
             "((a_account = ?1 AND a_guid = ?2) OR (b_account = ?1 AND b_guid = ?2))",
-    ).bind(account, g).first<{ n: number }>();
-    return r?.n ?? 0;
+    ).bind(account, characterGuid).first<{ n: number }>();
+
+    return result?.n ?? 0;
 }
 
 // Adds a key row for a PC. Shared by sign-up, link redeem and recovery.
-async function insertKeyStmt(env: Env, account: string, key: string, lbl: string, t: number)
+async function insertKeyStmt(env: Env, account: string, key: string, lbl: string, currentTime: number)
 {
     const hash = await sha256(key);
     const taken = await env.DB.prepare("SELECT 1 FROM keys WHERE hash = ?1").bind(hash).first();
@@ -145,19 +156,21 @@ async function insertKeyStmt(env: Env, account: string, key: string, lbl: string
         stmt: env.DB.prepare
         (
             "INSERT INTO keys (hash, id, account_id, label, created_at, last_seen) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-        ).bind(hash, kid, account, lbl, t),
+        ).bind(hash, kid, account, lbl, currentTime),
     };
 }
 
+// How many PCs an account has linked, to enforce the PC cap.
 async function keyCount(env: Env, account: string): Promise<number>
 {
-    const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM keys WHERE account_id = ?1").bind(account).first<{ n: number }>();
+    const result = await env.DB.prepare("SELECT COUNT(*) AS n FROM keys WHERE account_id = ?1").bind(account).first<{ n: number }>();
 
-    return r?.n ?? 0;
+    return result?.n ?? 0;
 }
 
 // ---------------------------------------------------------------- accounts
 
+// POST /v1/account: a new account with its first PC key and a recovery code.
 async function createAccount(req: Request, env: Env): Promise<Response>
 {
     await limit(env.RL_SIGNUP, "signup:" + ip(req));
@@ -165,7 +178,7 @@ async function createAccount(req: Request, env: Env): Promise<Response>
     const key = bearer(req);
     const body = await readJson(req);
     const mode = await signups(env);
-    const t = now();
+    const currentTime = now();
     let invitedBy: string | null = null;
     let inviteHash: string | null = null;
 
@@ -178,7 +191,7 @@ async function createAccount(req: Request, env: Env): Promise<Response>
         inviteHash = await sha256("invite:" + code);
 
         const inv = await env.DB.prepare("SELECT account_id FROM invites WHERE hash = ?1 AND expires_at > ?2")
-            .bind(inviteHash, t).first<{ account_id: string }>();
+            .bind(inviteHash, currentTime).first<{ account_id: string }>();
 
         if (!inv) fail(403, "invite_required");
 
@@ -187,14 +200,14 @@ async function createAccount(req: Request, env: Env): Promise<Response>
 
     const account = randomHex(8);
     const rec = await newRecovery();
-    const k = await insertKeyStmt(env, account, key, label(body.label), t);
+    const newKey = await insertKeyStmt(env, account, key, label(body.label), currentTime);
     const stmts =
     [
         env.DB.prepare
         (
             "INSERT INTO accounts (id, created_at, last_seen, recovery_hash, invited_by) VALUES (?1, ?2, ?2, ?3, ?4)",
-        ).bind(account, t, rec.hash, invitedBy),
-        k.stmt,
+        ).bind(account, currentTime, rec.hash, invitedBy),
+        newKey.stmt,
     ];
 
     if (inviteHash)
@@ -207,27 +220,28 @@ async function createAccount(req: Request, env: Env): Promise<Response>
 
     await env.DB.batch(stmts);
 
-    return json({ account_id: account, key_id: k.kid, recovery_code: rec.code }, 201);
+    return json({ account_id: account, key_id: newKey.kid, recovery_code: rec.code }, 201);
 }
 
-async function getAccount(env: Env, a: Auth): Promise<Response>
+// GET /v1/account: the account, its PCs, characters and pairings.
+async function getAccount(env: Env, auth: Auth): Promise<Response>
 {
-    const acct = await env.DB.prepare("SELECT id, created_at FROM accounts WHERE id = ?1").bind(a.account).first();
+    const acct = await env.DB.prepare("SELECT id, created_at FROM accounts WHERE id = ?1").bind(auth.account).first();
     const keys = await env.DB.prepare
     (
         "SELECT id, label, created_at, last_seen FROM keys WHERE account_id = ?1 ORDER BY created_at",
-    ).bind(a.account).all<{ id: string; label: string; created_at: number; last_seen: number }>();
-    const chars = await env.DB.prepare("SELECT guid, name, realm FROM characters WHERE account_id = ?1 ORDER BY name").bind(a.account).all();
+    ).bind(auth.account).all<{ id: string; label: string; created_at: number; last_seen: number }>();
+    const chars = await env.DB.prepare("SELECT guid, name, realm FROM characters WHERE account_id = ?1 ORDER BY name").bind(auth.account).all();
 
-    return json({ account: acct, pcs: keys.results.map((k) => ({ ...k, current: k.id === a.keyId })), characters: chars.results});
+    return json({ account: acct, pcs: keys.results.map((keyRow) => ({ ...keyRow, current: keyRow.id === auth.keyId })), characters: chars.results});
 }
 
 /** Removes everything the account owns. Its side of each pairing is scrubbed, and the pairing ended. */
 async function deleteAccountData(env: Env, account: string, reason: string): Promise<void>
 {
-    const t = now();
-    const n = await env.DB.prepare("UPDATE counters SET v = v + 1 WHERE k = 'deleted' RETURNING v").first<{ v: number }>();
-    const tag = "deleted-" + (n?.v ?? 0);
+    const currentTime = now();
+    const deletedCounter = await env.DB.prepare("UPDATE counters SET v = v + 1 WHERE k = 'deleted' RETURNING v").first<{ v: number }>();
+    const tag = "deleted-" + (deletedCounter?.v ?? 0);
 
     await env.DB.batch
     ([
@@ -235,44 +249,48 @@ async function deleteAccountData(env: Env, account: string, reason: string): Pro
         (
             "UPDATE pairings SET ended_at = COALESCE(ended_at, ?2), ended_reason = COALESCE(ended_reason, ?3), " +
                 "a_account = '', a_guid = '', a_name = '', a_realm = '', a_key = '' WHERE a_account = ?1",
-        ).bind(account, t, reason),
+        ).bind(account, currentTime, reason),
         env.DB.prepare
         (
             "UPDATE pairings SET ended_at = COALESCE(ended_at, ?2), ended_reason = COALESCE(ended_reason, ?3), " +
                 "b_account = '', b_guid = '', b_name = '', b_realm = '', b_key = '' WHERE b_account = ?1",
-        ).bind(account, t, reason),
+        ).bind(account, currentTime, reason),
         env.DB.prepare("UPDATE accounts SET invited_by = ?2 WHERE invited_by = ?1").bind(account, tag),
         env.DB.prepare("DELETE FROM accounts WHERE id = ?1").bind(account),
     ]);
 }
 
-async function deleteAccount(env: Env, a: Auth): Promise<Response>
+// DELETE /v1/account: removes the account and everything it owns.
+async function deleteAccount(env: Env, auth: Auth): Promise<Response>
 {
-    await deleteAccountData(env, a.account, "deleted");
+    await deleteAccountData(env, auth.account, "deleted");
 
     return json({ deleted: true });
 }
 
 // ---------------------------------------------------------------- PCs, recovery, invites
 
-async function removeKey(env: Env, a: Auth, kid: string): Promise<Response>
+// Unlinks one PC from the account.
+async function removeKey(env: Env, auth: Auth, kid: string): Promise<Response>
 {
-    const r = await env.DB.prepare("DELETE FROM keys WHERE id = ?1 AND account_id = ?2").bind(id(kid), a.account).run();
+    const result = await env.DB.prepare("DELETE FROM keys WHERE id = ?1 AND account_id = ?2").bind(id(kid), auth.account).run();
 
-    if (!r.meta.changes) fail(404, "not_found");
+    if (!result.meta.changes) fail(404, "not_found");
 
     return json({ removed: true });
 }
 
-async function rotateRecovery(env: Env, a: Auth): Promise<Response>
+// Replaces the recovery code; the old one stops working.
+async function rotateRecovery(env: Env, auth: Auth): Promise<Response>
 {
     const rec = await newRecovery();
 
-    await env.DB.prepare("UPDATE accounts SET recovery_hash = ?1 WHERE id = ?2").bind(rec.hash, a.account).run();
+    await env.DB.prepare("UPDATE accounts SET recovery_hash = ?1 WHERE id = ?2").bind(rec.hash, auth.account).run();
 
     return json({ recovery_code: rec.code });
 }
 
+// Signs a new PC in with the recovery code.
 async function recover(req: Request, env: Env): Promise<Response>
 {
     await limit(env.RL_SIGNUP, "recover:" + ip(req));
@@ -291,27 +309,29 @@ async function recover(req: Request, env: Env): Promise<Response>
     if (acct.banned) fail(403, "banned");
     if ((await keyCount(env, acct.id)) >= MAX_KEYS) fail(409, "too_many_pcs");
 
-    const t = now();
+    const currentTime = now();
     const rec = await newRecovery();
-    const k = await insertKeyStmt(env, acct.id, key, label(body.label), t);
+    const newKey = await insertKeyStmt(env, acct.id, key, label(body.label), currentTime);
 
-    await env.DB.batch([k.stmt, env.DB.prepare("UPDATE accounts SET recovery_hash = ?1, last_seen = ?2 WHERE id = ?3").bind(rec.hash, t, acct.id)]);
+    await env.DB.batch([newKey.stmt, env.DB.prepare("UPDATE accounts SET recovery_hash = ?1, last_seen = ?2 WHERE id = ?3").bind(rec.hash, currentTime, acct.id)]);
 
-    return json({ account_id: acct.id, key_id: k.kid, recovery_code: rec.code });
+    return json({ account_id: acct.id, key_id: newKey.kid, recovery_code: rec.code });
 }
 
-async function makeLinkCode(env: Env, a: Auth): Promise<Response>
+// A short-lived code for linking another PC to this account.
+async function makeLinkCode(env: Env, auth: Auth): Promise<Response>
 {
-    if ((await keyCount(env, a.account)) >= MAX_KEYS) fail(409, "too_many_pcs");
+    if ((await keyCount(env, auth.account)) >= MAX_KEYS) fail(409, "too_many_pcs");
 
     const code = randomCode(12);
     const exp = now() + LINK_CODE_TTL;
 
-    await env.DB.prepare("INSERT INTO link_codes (hash, account_id, expires_at) VALUES (?1, ?2, ?3)").bind(await sha256("link:" + code), a.account, exp).run();
+    await env.DB.prepare("INSERT INTO link_codes (hash, account_id, expires_at) VALUES (?1, ?2, ?3)").bind(await sha256("link:" + code), auth.account, exp).run();
 
     return json({ code: groupCode(code), expires_at: exp }, 201);
 }
 
+// A new PC uses a link code to join the account.
 async function redeemLinkCode(req: Request, env: Env): Promise<Response>
 {
     await limit(env.RL_SIGNUP, "link:" + ip(req));
@@ -323,40 +343,42 @@ async function redeemLinkCode(req: Request, env: Env): Promise<Response>
     if (!code) fail(404, "not_found");
 
     const hash = await sha256("link:" + code);
-    const t = now();
-    const row = await env.DB.prepare("SELECT account_id FROM link_codes WHERE hash = ?1 AND expires_at > ?2").bind(hash, t).first<{ account_id: string }>();
+    const currentTime = now();
+    const row = await env.DB.prepare("SELECT account_id FROM link_codes WHERE hash = ?1 AND expires_at > ?2").bind(hash, currentTime).first<{ account_id: string }>();
 
     if (!row) fail(404, "not_found");
     if ((await keyCount(env, row.account_id)) >= MAX_KEYS) fail(409, "too_many_pcs");
 
-    const k = await insertKeyStmt(env, row.account_id, key, label(body.label), t);
+    const newKey = await insertKeyStmt(env, row.account_id, key, label(body.label), currentTime);
     // Take the code first: if two PCs race for one code, only one gets it.
     const took = await env.DB.prepare("DELETE FROM link_codes WHERE hash = ?1").bind(hash).run();
 
     if (!took.meta.changes) fail(404, "not_found");
 
-    await env.DB.batch([k.stmt]);
+    await env.DB.batch([newKey.stmt]);
 
-    return json({ account_id: row.account_id, key_id: k.kid });
+    return json({ account_id: row.account_id, key_id: newKey.kid });
 }
 
-async function makeInvite(env: Env, a: Auth): Promise<Response>
+// An invite code for when sign-ups need one.
+async function makeInvite(env: Env, auth: Auth): Promise<Response>
 {
     if ((await signups(env)) !== "invite") fail(409, "signups_open");
 
     const code = randomCode(12);
     const exp = now() + INVITE_TTL;
 
-    await env.DB.prepare("INSERT INTO invites (hash, account_id, expires_at) VALUES (?1, ?2, ?3)").bind(await sha256("invite:" + code), a.account, exp).run();
+    await env.DB.prepare("INSERT INTO invites (hash, account_id, expires_at) VALUES (?1, ?2, ?3)").bind(await sha256("invite:" + code), auth.account, exp).run();
 
     return json({ code: groupCode(code), expires_at: exp }, 201);
 }
 
 // ---------------------------------------------------------------- characters
 
-async function putCharacter(req: Request, env: Env, a: Auth, g: string): Promise<Response>
+// Adds or updates one of the account's characters.
+async function putCharacter(req: Request, env: Env, auth: Auth, characterGuid: string): Promise<Response>
 {
-    g = guid(g);
+    characterGuid = guid(characterGuid);
 
     const body = await readJson(req);
     const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -366,17 +388,18 @@ async function putCharacter(req: Request, env: Env, a: Auth, g: string): Promise
     if (!RE_REALM.test(realm)) fail(400, "bad_realm");
 
     const exists = await env.DB.prepare("SELECT name, realm FROM characters WHERE account_id = ?1 AND guid = ?2")
-        .bind(a.account, g).first<{ name: string; realm: string }>();
+        .bind(auth.account, characterGuid).first<{ name: string; realm: string }>();
 
     if (!exists)
     {
-        const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM characters WHERE account_id = ?1").bind(a.account).first<{ n: number }>();
+        const characterCount = await env.DB.prepare("SELECT COUNT(*) AS n FROM characters WHERE account_id = ?1").bind(auth.account).first<{ n: number }>();
 
-        if ((n?.n ?? 0) >= MAX_CHARACTERS) fail(409, "too_many_characters");
+        if ((characterCount?.n ?? 0) >= MAX_CHARACTERS) fail(409, "too_many_characters");
     }
+
     else if (exists.name === name && exists.realm === realm)
     {
-        return json({ guid: g, name, realm });
+        return json({ guid: characterGuid, name, realm });
     }
 
     await env.DB.batch
@@ -385,30 +408,31 @@ async function putCharacter(req: Request, env: Env, a: Auth, g: string): Promise
         (
             "INSERT INTO characters (account_id, guid, name, realm, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) " +
                 "ON CONFLICT (account_id, guid) DO UPDATE SET name = excluded.name, realm = excluded.realm, updated_at = excluded.updated_at",
-        ).bind(a.account, g, name, realm, now()),
+        ).bind(auth.account, characterGuid, name, realm, now()),
         // Keep the names partners see in step with renames.
         env.DB.prepare("UPDATE pairings SET a_name = ?3, a_realm = ?4 WHERE a_account = ?1 AND a_guid = ?2 AND ended_at IS NULL")
-            .bind(a.account, g, name, realm),
+            .bind(auth.account, characterGuid, name, realm),
         env.DB.prepare("UPDATE pairings SET b_name = ?3, b_realm = ?4 WHERE b_account = ?1 AND b_guid = ?2 AND ended_at IS NULL")
-            .bind(a.account, g, name, realm),
+            .bind(auth.account, characterGuid, name, realm),
     ]);
 
-    return json({ guid: g, name, realm });
+    return json({ guid: characterGuid, name, realm });
 }
 
-async function deleteCharacter(env: Env, a: Auth, g: string): Promise<Response>
+// Removes a character and ends its pairings.
+async function deleteCharacter(env: Env, auth: Auth, characterGuid: string): Promise<Response>
 {
-    g = guid(g);
+    characterGuid = guid(characterGuid);
 
-    const t = now();
+    const currentTime = now();
 
     await env.DB.batch
     ([
         env.DB.prepare("UPDATE pairings SET ended_at = ?3, ended_reason = 'removed' WHERE ended_at IS NULL AND " +
-            "((a_account = ?1 AND a_guid = ?2) OR (b_account = ?1 AND b_guid = ?2))").bind(a.account, g, t),
-        env.DB.prepare("DELETE FROM slots WHERE account_id = ?1 AND from_guid = ?2").bind(a.account, g),
-        env.DB.prepare("DELETE FROM pair_codes WHERE account_id = ?1 AND guid = ?2").bind(a.account, g),
-        env.DB.prepare("DELETE FROM characters WHERE account_id = ?1 AND guid = ?2").bind(a.account, g),
+            "((a_account = ?1 AND a_guid = ?2) OR (b_account = ?1 AND b_guid = ?2))").bind(auth.account, characterGuid, currentTime),
+        env.DB.prepare("DELETE FROM slots WHERE account_id = ?1 AND from_guid = ?2").bind(auth.account, characterGuid),
+        env.DB.prepare("DELETE FROM pair_codes WHERE account_id = ?1 AND guid = ?2").bind(auth.account, characterGuid),
+        env.DB.prepare("DELETE FROM characters WHERE account_id = ?1 AND guid = ?2").bind(auth.account, characterGuid),
     ]);
 
     return json({ removed: true });
@@ -416,53 +440,59 @@ async function deleteCharacter(env: Env, a: Auth, g: string): Promise<Response>
 
 // ---------------------------------------------------------------- pairing
 
-async function makePairCode(req: Request, env: Env, a: Auth): Promise<Response>
+// A pair code another player can use to sync with this character.
+async function makePairCode(req: Request, env: Env, auth: Auth): Promise<Response>
 {
     const body = await readJson(req);
-    const g = guid(body.guid);
+    const characterGuid = guid(body.guid);
 
-    await myCharacter(env, a.account, g);
+    await myCharacter(env, auth.account, characterGuid);
 
-    const t = now();
+    const currentTime = now();
     const open = await env.DB.prepare
     (
         "SELECT COUNT(*) AS n FROM pair_codes WHERE account_id = ?1 AND guid = ?2 AND expires_at > ?3",
-    ).bind(a.account, g, t).first<{ n: number }>();
+    ).bind(auth.account, characterGuid, currentTime).first<{ n: number }>();
+
     // Open codes can never add up to more partners than the character has room for.
-    if ((open?.n ?? 0) + (await activePartners(env, a.account, g)) >= MAX_PARTNERS) fail(409, "partner_limit");
+    if ((open?.n ?? 0) + (await activePartners(env, auth.account, characterGuid)) >= MAX_PARTNERS) fail(409, "partner_limit");
 
     const code = randomCode(12);
     const cid = randomHex(8);
 
     await env.DB.prepare("INSERT INTO pair_codes (hash, id, account_id, guid, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)")
-        .bind(await sha256("pair:" + code), cid, a.account, g, t + PAIR_CODE_TTL).run();
+        .bind(await sha256("pair:" + code), cid, auth.account, characterGuid, currentTime + PAIR_CODE_TTL).run();
 
-    return json({ id: cid, code: groupCode(code), guid: g, expires_at: t + PAIR_CODE_TTL }, 201);
+    return json({ id: cid, code: groupCode(code), guid: characterGuid, expires_at: currentTime + PAIR_CODE_TTL }, 201);
 }
 
-async function listPairCodes(env: Env, a: Auth): Promise<Response>
+// This account's pair codes that are still waiting.
+async function listPairCodes(env: Env, auth: Auth): Promise<Response>
 {
-    const r = await env.DB.prepare
+    const result = await env.DB.prepare
     (
         "SELECT id, guid, expires_at FROM pair_codes WHERE account_id = ?1 AND expires_at > ?2 ORDER BY expires_at",
-    ).bind(a.account, now()).all();
-    return json({ codes: r.results });
+    ).bind(auth.account, now()).all();
+
+    return json({ codes: result.results });
 }
 
-async function cancelPairCode(env: Env, a: Auth, cid: string): Promise<Response>
+// Withdraws a waiting pair code.
+async function cancelPairCode(env: Env, auth: Auth, cid: string): Promise<Response>
 {
-    const r = await env.DB.prepare("DELETE FROM pair_codes WHERE id = ?1 AND account_id = ?2").bind(id(cid), a.account).run();
+    const result = await env.DB.prepare("DELETE FROM pair_codes WHERE id = ?1 AND account_id = ?2").bind(id(cid), auth.account).run();
 
-    if (!r.meta.changes) fail(404, "not_found");
+    if (!result.meta.changes) fail(404, "not_found");
 
     return json({ cancelled: true });
 }
 
 interface CodeRow { hash: string; account_id: string; guid: string; name: string; realm: string }
 
-async function lookupPairCode(req: Request, env: Env, a: Auth, body: Record<string, unknown>): Promise<CodeRow>
+// Finds a typed pair code, with rate limits so codes can't be guessed.
+async function lookupPairCode(req: Request, env: Env, auth: Auth, body: Record<string, unknown>): Promise<CodeRow>
 {
-    await limit(env.RL_CODES, "codes:a:" + a.account);
+    await limit(env.RL_CODES, "codes:a:" + auth.account);
     await limit(env.RL_CODES, "codes:ip:" + ip(req));
 
     const code = normalizeCode(body.code, 12);
@@ -477,8 +507,9 @@ async function lookupPairCode(req: Request, env: Env, a: Auth, body: Record<stri
             "JOIN accounts acc ON acc.id = p.account_id " +
             "WHERE p.hash = ?1 AND p.expires_at > ?2 AND acc.banned = 0",
     ).bind(hash, now()).first<CodeRow>();
+
     if (!row) fail(404, "not_found");
-    if (row.account_id === a.account) fail(409, "own_code");
+    if (row.account_id === auth.account) fail(409, "own_code");
 
     return row;
 }
@@ -491,57 +522,59 @@ async function existingPair(env: Env, myAccount: string, myGuid: string, theirGu
         "SELECT id, CASE WHEN a_account = ?1 THEN b_account ELSE a_account END AS other FROM pairings WHERE ended_at IS NULL AND " +
             "((a_account = ?1 AND a_guid = ?2 AND b_guid = ?3) OR (b_account = ?1 AND b_guid = ?2 AND a_guid = ?3))",
     ).bind(myAccount, myGuid, theirGuid).all<{ id: string; other: string }>()
-        .then((r) =>
+        .then((result) =>
         ({
-            same: r.results.find((p) => p.other === theirAccount),
-            others: r.results.filter((p) => p.other !== theirAccount),
+            same: result.results.find((pairing) => pairing.other === theirAccount),
+            others: result.results.filter((pairing) => pairing.other !== theirAccount),
         }));
 }
 
-async function peekPairCode(req: Request, env: Env, a: Auth): Promise<Response>
+// Shows who a pair code belongs to before it's used.
+async function peekPairCode(req: Request, env: Env, auth: Auth): Promise<Response>
 {
     const body = await readJson(req);
-    const g = guid(body.guid);
+    const characterGuid = guid(body.guid);
 
-    await myCharacter(env, a.account, g);
+    await myCharacter(env, auth.account, characterGuid);
 
-    const row = await lookupPairCode(req, env, a, body);
-    const ex = await existingPair(env, a.account, g, row.guid, row.account_id);
+    const row = await lookupPairCode(req, env, auth, body);
+    const existing = await existingPair(env, auth.account, characterGuid, row.guid, row.account_id);
 
-    return json({ partner: { guid: row.guid, name: row.name, realm: row.realm }, already_paired: !!ex.same, different_install: ex.others.length > 0});
+    return json({ partner: { guid: row.guid, name: row.name, realm: row.realm }, already_paired: !!existing.same, different_install: existing.others.length > 0});
 }
 
-async function redeemPairCode(req: Request, env: Env, a: Auth): Promise<Response>
+// Uses a pair code: the two characters become partners.
+async function redeemPairCode(req: Request, env: Env, auth: Auth): Promise<Response>
 {
     const body = await readJson(req);
-    const g = guid(body.guid);
-    const me = await myCharacter(env, a.account, g);
-    const row = await lookupPairCode(req, env, a, body);
-    const ex = await existingPair(env, a.account, g, row.guid, row.account_id);
+    const characterGuid = guid(body.guid);
+    const mine = await myCharacter(env, auth.account, characterGuid);
+    const row = await lookupPairCode(req, env, auth, body);
+    const existing = await existingPair(env, auth.account, characterGuid, row.guid, row.account_id);
 
-    if (ex.same)
+    if (existing.same)
     {
         await env.DB.prepare("DELETE FROM pair_codes WHERE hash = ?1").bind(row.hash).run();
 
-        return json({ pairing_id: ex.same.id, already_paired: true });
+        return json({ pairing_id: existing.same.id, already_paired: true });
     }
 
-    if (ex.others.length && body.replace !== true) fail(409, "different_install");
+    if (existing.others.length && body.replace !== true) fail(409, "different_install");
 
-    const replacing = ex.others.length;
+    const replacing = existing.others.length;
 
-    if ((await activePartners(env, a.account, g)) - replacing >= MAX_PARTNERS) fail(409, "partner_limit");
+    if ((await activePartners(env, auth.account, characterGuid)) - replacing >= MAX_PARTNERS) fail(409, "partner_limit");
     if ((await activePartners(env, row.account_id, row.guid)) >= MAX_PARTNERS) fail(409, "partner_limit");
 
-    const t = now();
+    const currentTime = now();
     const pid = randomHex(8);
     // Take the code first: if two accounts race for one code, only one gets the pairing.
     const took = await env.DB.prepare("DELETE FROM pair_codes WHERE hash = ?1").bind(row.hash).run();
 
     if (!took.meta.changes) fail(404, "not_found");
 
-    const stmts = ex.others.map((p) =>
-        env.DB.prepare("UPDATE pairings SET ended_at = ?2, ended_reason = 'replaced' WHERE id = ?1 AND ended_at IS NULL").bind(p.id, t),
+    const stmts = existing.others.map((pairing) =>
+        env.DB.prepare("UPDATE pairings SET ended_at = ?2, ended_reason = 'replaced' WHERE id = ?1 AND ended_at IS NULL").bind(pairing.id, currentTime),
     );
 
     stmts.push
@@ -550,8 +583,8 @@ async function redeemPairCode(req: Request, env: Env, a: Auth): Promise<Response
         (
             "INSERT INTO pairings (id, a_account, a_guid, a_name, a_realm, a_key, b_account, b_guid, b_name, b_realm, b_key, created_at) " +
                 "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        ).bind(pid, row.account_id, row.guid, row.name, row.realm, randomCode(16), a.account, g, me.name, me.realm, randomCode(16), t),
-        env.DB.prepare("UPDATE accounts SET ever_paired = 1 WHERE id IN (?1, ?2)").bind(a.account, row.account_id),
+        ).bind(pid, row.account_id, row.guid, row.name, row.realm, randomCode(16), auth.account, characterGuid, mine.name, mine.realm, randomCode(16), currentTime),
+        env.DB.prepare("UPDATE accounts SET ever_paired = 1 WHERE id IN (?1, ?2)").bind(auth.account, row.account_id),
     );
 
     await env.DB.batch(stmts);
@@ -559,10 +592,11 @@ async function redeemPairCode(req: Request, env: Env, a: Auth): Promise<Response
     return json({ pairing_id: pid, replaced: replacing }, 201);
 }
 
-async function listPairings(env: Env, a: Auth): Promise<Response>
+// This account's partners.
+async function listPairings(env: Env, auth: Auth): Promise<Response>
 {
-    const t = now();
-    const r = await env.DB.prepare
+    const currentTime = now();
+    const result = await env.DB.prepare
     (
         "SELECT id, created_at, ended_at, ended_reason, " +
             "CASE WHEN a_account = ?1 THEN a_guid ELSE b_guid END AS my_guid, " +
@@ -572,27 +606,30 @@ async function listPairings(env: Env, a: Auth): Promise<Response>
             "CASE WHEN a_account = ?1 THEN a_key ELSE b_key END AS my_key, " +
             "CASE WHEN a_account = ?1 THEN b_key ELSE a_key END AS partner_key " +
             "FROM pairings WHERE (a_account = ?1 OR b_account = ?1) AND (ended_at IS NULL OR ended_at > ?2) ORDER BY created_at",
-    ).bind(a.account, t - 30 * DAY).all<Record<string, unknown>>();
+    ).bind(auth.account, currentTime - 30 * DAY).all<Record<string, unknown>>();
     // Keys are only handed out while the pairing is live.
-    const pairings = r.results.map((p) => p.ended_at ? { ...p, my_key: null, partner_key: null, status: "ended" } : { ...p, status: "active" });
+    const pairings = result.results.map((pairing) => pairing.ended_at ? { ...pairing, my_key: null, partner_key: null, status: "ended" } : { ...pairing, status: "active" });
 
     return json({ pairings });
 }
 
-async function endPairing(env: Env, a: Auth, pid: string): Promise<Response>
+// Ends a partnership for both sides.
+async function endPairing(env: Env, auth: Auth, pid: string): Promise<Response>
 {
-    const r = await env.DB.prepare
+    const result = await env.DB.prepare
     (
         "UPDATE pairings SET ended_at = ?3, ended_reason = 'removed' WHERE id = ?1 AND ended_at IS NULL AND (a_account = ?2 OR b_account = ?2)",
-    ).bind(id(pid), a.account, now()).run();
-    if (!r.meta.changes) fail(404, "not_found");
+    ).bind(id(pid), auth.account, now()).run();
+
+    if (!result.meta.changes) fail(404, "not_found");
 
     return json({ ended: true });
 }
 
 // ---------------------------------------------------------------- slots and inbox
 
-async function putSlot(req: Request, env: Env, a: Auth, from: string, to: string): Promise<Response>
+// Saves one character's latest quest packet for one partner.
+async function putSlot(req: Request, env: Env, auth: Auth, from: string, to: string): Promise<Response>
 {
     from = guid(from);
     to = guid(to);
@@ -612,29 +649,32 @@ async function putSlot(req: Request, env: Env, a: Auth, from: string, to: string
 
     if (from === to)
     {
-        await myCharacter(env, a.account, from); // self slot: only your own listed character
+        await myCharacter(env, auth.account, from); // self slot: only your own listed character
     }
+
     else
     {
         // A partner slot needs a live pairing where this account holds the "from" side.
-        const p = await env.DB.prepare
+        const livePairing = await env.DB.prepare
         (
             "SELECT 1 FROM pairings WHERE ended_at IS NULL AND " +
                 "((a_account = ?1 AND a_guid = ?2 AND b_guid = ?3) OR (b_account = ?1 AND b_guid = ?2 AND a_guid = ?3))",
-        ).bind(a.account, from, to).first();
-        if (!p) fail(403, "not_paired");
+        ).bind(auth.account, from, to).first();
+
+        if (!livePairing) fail(403, "not_paired");
     }
 
     const cur = await env.DB.prepare
     (
         "SELECT game_time, seq, packet = ?4 AS same FROM slots WHERE account_id = ?1 AND from_guid = ?2 AND to_guid = ?3",
-    ).bind(a.account, from, to, packet).first<{ game_time: number; seq: number; same: number }>();
+    ).bind(auth.account, from, to, packet).first<{ game_time: number; seq: number; same: number }>();
+
     if (cur && cur.game_time > gameTime) return json({ error: "stale", seq: cur.seq, game_time: cur.game_time }, 409);
     if (cur && cur.game_time === gameTime && cur.same) return json({ seq: cur.seq, unchanged: true });
 
-    const t = now();
+    const currentTime = now();
     // Daily cap per account, so one account can't use up the whole server's daily write allowance.
-    const dayKey = "up:" + Math.floor(t / DAY) + ":" + a.account;
+    const dayKey = "up:" + Math.floor(currentTime / DAY) + ":" + auth.account;
     const used = await env.DB.prepare("SELECT v FROM counters WHERE k = ?1").bind(dayKey).first<{ v: number }>();
 
     if ((used?.v ?? 0) >= MAX_UPLOADS_PER_DAY) fail(429, "daily_limit");
@@ -649,8 +689,8 @@ async function putSlot(req: Request, env: Env, a: Auth, from: string, to: string
                 "VALUES (?1, ?2, ?3, ?4, ?5, ?6, (SELECT v FROM counters WHERE k = 'seq'), ?7) " +
                 "ON CONFLICT (account_id, from_guid, to_guid) DO UPDATE SET packet = excluded.packet, game_time = excluded.game_time, " +
                 "proto = excluded.proto, seq = excluded.seq, updated_at = excluded.updated_at WHERE excluded.game_time >= slots.game_time",
-        ).bind(a.account, from, to, packet, gameTime, proto, t),
-        env.DB.prepare("SELECT seq, game_time FROM slots WHERE account_id = ?1 AND from_guid = ?2 AND to_guid = ?3").bind(a.account, from, to),
+        ).bind(auth.account, from, to, packet, gameTime, proto, currentTime),
+        env.DB.prepare("SELECT seq, game_time FROM slots WHERE account_id = ?1 AND from_guid = ?2 AND to_guid = ?3").bind(auth.account, from, to),
     ]);
 
     const saved = res[3].results[0] as { seq: number; game_time: number };
@@ -660,14 +700,15 @@ async function putSlot(req: Request, env: Env, a: Auth, from: string, to: string
     return json({ seq: saved.seq }, 201);
 }
 
-async function inbox(req: Request, env: Env, a: Auth): Promise<Response>
+// The packets partners have left for this account's characters.
+async function inbox(req: Request, env: Env, auth: Auth): Promise<Response>
 {
     const sinceRaw = new URL(req.url).searchParams.get("since") || "0";
 
     if (!/^\d{1,15}$/.test(sinceRaw)) fail(400, "bad_since");
 
     const since = Number(sinceRaw);
-    const r = await env.DB.prepare
+    const result = await env.DB.prepare
     (
         "SELECT s.from_guid, s.to_guid, s.packet, s.game_time, s.proto, s.seq, 'partner' AS kind " +
             "FROM pairings p JOIN slots s ON " +
@@ -678,9 +719,9 @@ async function inbox(req: Request, env: Env, a: Auth): Promise<Response>
             "SELECT s.from_guid, s.to_guid, s.packet, s.game_time, s.proto, s.seq, 'self' AS kind " +
             "FROM slots s WHERE s.account_id = ?1 AND s.from_guid = s.to_guid AND s.seq > ?2 " +
             "ORDER BY seq LIMIT ?3",
-    ).bind(a.account, since, INBOX_LIMIT + 1).all<{ seq: number }>();
-    const more = r.results.length > INBOX_LIMIT;
-    const packets = r.results.slice(0, INBOX_LIMIT);
+    ).bind(auth.account, since, INBOX_LIMIT + 1).all<{ seq: number }>();
+    const more = result.results.length > INBOX_LIMIT;
+    const packets = result.results.slice(0, INBOX_LIMIT);
     const last = packets.length ? packets[packets.length - 1].seq : since;
 
     return json({ packets, next: last, more });
@@ -689,8 +730,8 @@ async function inbox(req: Request, env: Env, a: Auth): Promise<Response>
 // Open to everyone: versions, sign-up mode and the owner's notices, in one database read.
 async function meta(env: Env): Promise<Response>
 {
-    const r = await env.DB.prepare("SELECT k, v FROM settings WHERE k IN ('signups', 'notices')").all<{ k: string; v: string }>();
-    const get = (k: string) => r.results.find((x) => x.k === k)?.v ?? null;
+    const result = await env.DB.prepare("SELECT k, v FROM settings WHERE k IN ('signups', 'notices')").all<{ k: string; v: string }>();
+    const get = (settingKey: string) => result.results.find((row) => row.k === settingKey)?.v ?? null;
 
     return json
     ({
@@ -708,60 +749,61 @@ type AuthHandler = (req: Request, env: Env, a: Auth, m: RegExpMatchArray) => Pro
 
 const open: [string, RegExp, Handler][] =
 [
-    ["GET", /^\/v1\/meta$/, (_r, env) => meta(env)],
+    ["GET", /^\/v1\/meta$/, (_request, env) => meta(env)],
     // A plain redirect: no database, no key. The app checks the update's signature itself.
     ["GET", /^\/update\/latest\.json$/, async () => new Response(null, { status: 302, headers: { location: UPDATE_FEED, "cache-control": "no-store" } })],
-    ["POST", /^\/v1\/accounts$/, (r, env) => createAccount(r, env)],
-    ["POST", /^\/v1\/recover$/, (r, env) => recover(r, env)],
-    ["POST", /^\/v1\/link-codes\/redeem$/, (r, env) => redeemLinkCode(r, env)],
+    ["POST", /^\/v1\/accounts$/, (request, env) => createAccount(request, env)],
+    ["POST", /^\/v1\/recover$/, (request, env) => recover(request, env)],
+    ["POST", /^\/v1\/link-codes\/redeem$/, (request, env) => redeemLinkCode(request, env)],
 ];
 
 const authed: [string, RegExp, AuthHandler][] =
 [
-    ["GET", /^\/v1\/account$/, (_r, env, a) => getAccount(env, a)],
-    ["DELETE", /^\/v1\/account$/, (_r, env, a) => deleteAccount(env, a)],
-    ["POST", /^\/v1\/recovery$/, (_r, env, a) => rotateRecovery(env, a)],
-    ["DELETE", /^\/v1\/keys\/([^/]+)$/, (_r, env, a, m) => removeKey(env, a, m[1])],
-    ["POST", /^\/v1\/link-codes$/, (_r, env, a) => makeLinkCode(env, a)],
-    ["POST", /^\/v1\/invites$/, (_r, env, a) => makeInvite(env, a)],
-    ["PUT", /^\/v1\/characters\/([^/]+)$/, (r, env, a, m) => putCharacter(r, env, a, pathPart(m[1]))],
-    ["DELETE", /^\/v1\/characters\/([^/]+)$/, (_r, env, a, m) => deleteCharacter(env, a, pathPart(m[1]))],
-    ["POST", /^\/v1\/pair-codes$/, (r, env, a) => makePairCode(r, env, a)],
-    ["GET", /^\/v1\/pair-codes$/, (_r, env, a) => listPairCodes(env, a)],
-    ["DELETE", /^\/v1\/pair-codes\/([^/]+)$/, (_r, env, a, m) => cancelPairCode(env, a, m[1])],
-    ["POST", /^\/v1\/pair-codes\/peek$/, (r, env, a) => peekPairCode(r, env, a)],
-    ["POST", /^\/v1\/pair-codes\/redeem$/, (r, env, a) => redeemPairCode(r, env, a)],
-    ["GET", /^\/v1\/pairings$/, (_r, env, a) => listPairings(env, a)],
-    ["DELETE", /^\/v1\/pairings\/([^/]+)$/, (_r, env, a, m) => endPairing(env, a, m[1])],
-    ["PUT", /^\/v1\/slots\/([^/]+)\/([^/]+)$/, (r, env, a, m) => putSlot(r, env, a, pathPart(m[1]), pathPart(m[2]))],
-    ["GET", /^\/v1\/inbox$/, (r, env, a) => inbox(r, env, a)],
+    ["GET", /^\/v1\/account$/, (_request, env, auth) => getAccount(env, auth)],
+    ["DELETE", /^\/v1\/account$/, (_request, env, auth) => deleteAccount(env, auth)],
+    ["POST", /^\/v1\/recovery$/, (_request, env, auth) => rotateRecovery(env, auth)],
+    ["DELETE", /^\/v1\/keys\/([^/]+)$/, (_request, env, auth, match) => removeKey(env, auth, match[1])],
+    ["POST", /^\/v1\/link-codes$/, (_request, env, auth) => makeLinkCode(env, auth)],
+    ["POST", /^\/v1\/invites$/, (_request, env, auth) => makeInvite(env, auth)],
+    ["PUT", /^\/v1\/characters\/([^/]+)$/, (request, env, auth, match) => putCharacter(request, env, auth, pathPart(match[1]))],
+    ["DELETE", /^\/v1\/characters\/([^/]+)$/, (_request, env, auth, match) => deleteCharacter(env, auth, pathPart(match[1]))],
+    ["POST", /^\/v1\/pair-codes$/, (request, env, auth) => makePairCode(request, env, auth)],
+    ["GET", /^\/v1\/pair-codes$/, (_request, env, auth) => listPairCodes(env, auth)],
+    ["DELETE", /^\/v1\/pair-codes\/([^/]+)$/, (_request, env, auth, match) => cancelPairCode(env, auth, match[1])],
+    ["POST", /^\/v1\/pair-codes\/peek$/, (request, env, auth) => peekPairCode(request, env, auth)],
+    ["POST", /^\/v1\/pair-codes\/redeem$/, (request, env, auth) => redeemPairCode(request, env, auth)],
+    ["GET", /^\/v1\/pairings$/, (_request, env, auth) => listPairings(env, auth)],
+    ["DELETE", /^\/v1\/pairings\/([^/]+)$/, (_request, env, auth, match) => endPairing(env, auth, match[1])],
+    ["PUT", /^\/v1\/slots\/([^/]+)\/([^/]+)$/, (request, env, auth, match) => putSlot(request, env, auth, pathPart(match[1]), pathPart(match[2]))],
+    ["GET", /^\/v1\/inbox$/, (request, env, auth) => inbox(request, env, auth)],
 ];
 
+// Matches the method and path to a handler.
 async function route(req: Request, env: Env): Promise<Response>
 {
     const path = new URL(req.url).pathname;
     let pathMatched = false;
 
-    for (const [method, re, h] of open)
+    for (const [method, pattern, handler] of open)
     {
-        const m = path.match(re);
+        const match = path.match(pattern);
 
-        if (!m) continue;
+        if (!match) continue;
 
         pathMatched = true;
 
-        if (method === req.method) return h(req, env, m);
+        if (method === req.method) return handler(req, env, match);
     }
 
-    for (const [method, re, h] of authed)
+    for (const [method, pattern, handler] of authed)
     {
-        const m = path.match(re);
+        const match = path.match(pattern);
 
-        if (!m) continue;
+        if (!match) continue;
 
         pathMatched = true;
 
-        if (method === req.method) return h(req, env, await authenticate(req, env), m);
+        if (method === req.method) return handler(req, env, await authenticate(req, env), match);
     }
 
     return json({ error: pathMatched ? "method_not_allowed" : "not_found" }, pathMatched ? 405 : 404);
@@ -775,6 +817,7 @@ export default
         {
             return await route(req, env);
         }
+
         catch (e)
         {
             if (e instanceof HttpError) return json({ error: e.code }, e.status);

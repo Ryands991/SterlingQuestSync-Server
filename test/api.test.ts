@@ -357,6 +357,7 @@ describe("invite-only mode", () =>
             expect((await api("POST", "/v1/accounts", k, { invite: inv.data.code })).status).toBe(201);
             expect((await api("POST", "/v1/accounts", newKey(), { invite: inv.data.code })).status).toBe(403);
         }
+
         finally
         {
             await env.DB.prepare("UPDATE settings SET v = 'open' WHERE k = 'signups'").run();
