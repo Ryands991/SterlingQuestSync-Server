@@ -5,57 +5,64 @@ const KEY = location.hash.slice(1);
 
 history.replaceState(null, "", location.pathname); // keep the key out of the address bar
 
+// Shorthand for getElementById.
 const $ = (id) => document.getElementById(id);
+// Makes an element with a class and text (always text, never HTML).
 const el = (tag, cls, text) =>
 {
-    const e = document.createElement(tag);
+    const element = document.createElement(tag);
 
-    if (cls) e.className = cls;
-    if (text != null) e.textContent = text;
+    if (cls) element.className = cls;
+    if (text != null) element.textContent = text;
 
-    return e;
+    return element;
 };
 
-const fmt = (n) => Number(n).toLocaleString();
+// A number with thousands separators.
+const fmt = (value) => Number(value).toLocaleString();
 
+// Calls one of the admin tool's fixed jobs with this window's key.
 async function api(job, body)
 {
-    const r = await fetch("/api/" + job, { method: "POST", headers: { "content-type": "application/json", "x-admin-key": KEY }, body: JSON.stringify(body || {}) });
-    const v = await r.json().catch(() => ({ error: "Bad answer from the admin tool." }));
+    const response = await fetch("/api/" + job, { method: "POST", headers: { "content-type": "application/json", "x-admin-key": KEY }, body: JSON.stringify(body || {}) });
+    const result = await response.json().catch(() => ({ error: "Bad answer from the admin tool." }));
 
-    if (!r.ok) throw new Error(v.error || "Failed.");
+    if (!response.ok) throw new Error(result.error || "Failed.");
 
-    return v;
+    return result;
 }
 
 let toastTimer;
 
+// A short message at the bottom of the window.
 function toast(text, bad)
 {
-    const t = $("toast");
+    const box = $("toast");
 
-    t.textContent = String(text).replace(/^Error: /, "");
-    t.className = "toast" + (bad ? " bad" : "");
-    t.hidden = false;
+    box.textContent = String(text).replace(/^Error: /, "");
+    box.className = "toast" + (bad ? " bad" : "");
+    box.hidden = false;
 
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (t.hidden = true), bad ? 7000 : 3000);
+    toastTimer = setTimeout(() => (box.hidden = true), bad ? 7000 : 3000);
 }
 
-const fail = (e) => toast(e.message || e, true);
+// Shows an error as a red toast.
+const fail = (error) => toast(error.message || error, true);
 
-async function busy(btn, fn)
+// Runs a job with its button disabled, and shows any error.
+async function busy(btn, work)
 {
     if (btn) btn.disabled = true;
 
     try
     {
-        return await fn();
+        return await work();
     }
 
-    catch (e)
+    catch (error)
     {
-        fail(e);
+        fail(error);
     }
 
     finally
@@ -64,55 +71,59 @@ async function busy(btn, fn)
     }
 }
 
-function ago(t)
+// How long ago a Unix time was, in words.
+function ago(time)
 {
-    if (!t) return "never";
+    if (!time) return "never";
 
-    const s = Math.max(0, Date.now() / 1000 - t);
+    const seconds = Math.max(0, Date.now() / 1000 - time);
 
-    if (s < 90) return "just now";
+    if (seconds < 90) return "just now";
 
-    const m = Math.round(s / 60);
+    const minutes = Math.round(seconds / 60);
 
-    if (m < 60) return m + " min ago";
+    if (minutes < 60) return minutes + " min ago";
 
-    const h = Math.round(m / 60);
+    const hours = Math.round(minutes / 60);
 
-    if (h < 48) return h + (h === 1 ? " hr ago" : " hrs ago");
+    if (hours < 48) return hours + (hours === 1 ? " hr ago" : " hrs ago");
 
-    return Math.round(h / 24) + " days ago";
+    return Math.round(hours / 24) + " days ago";
 }
 
-function day(t)
+// A Unix time as Today, Yesterday or a date.
+function day(time)
 {
-    if (!t) return "";
+    if (!time) return "";
 
-    const d = new Date(t * 1000), now = new Date();
+    const date = new Date(time * 1000), now = new Date();
 
-    if (d.toDateString() === now.toDateString()) return "Today";
+    if (date.toDateString() === now.toDateString()) return "Today";
 
-    const y = new Date(now);
+    const yesterday = new Date(now);
 
-    y.setDate(now.getDate() - 1);
+    yesterday.setDate(now.getDate() - 1);
 
-    if (d.toDateString() === y.toDateString()) return "Yesterday";
+    if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
 
-    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+// Fills a box with label and value rows.
 function kv(box, rows)
 {
     box.replaceChildren();
 
-    for (const [k, v, cls] of rows)
+    for (const [label, value, cls] of rows)
     {
-        const d = el("div");
+        const row = el("div");
 
-        d.append(el("span", "", k), el("span", cls || "", v));
-        box.append(d);
+        row.append(el("span", "", label), el("span", cls || "", value));
+        box.append(row);
     }
 }
 
+// A dialog with buttons; resolves with the button's value, or null on Escape.
 function dialog(title, body, buttons)
 {
     return new Promise((resolve) =>
@@ -124,25 +135,25 @@ function dialog(title, body, buttons)
 
         row.replaceChildren();
 
-        const close = (v) =>
+        const close = (choice) =>
         {
             $("scrim").hidden = true;
-            resolve(v);
+            resolve(choice);
         };
 
         for (const [label, value, cls] of buttons)
         {
-            const b = el("button", "btn " + (cls || ""), label);
+            const button = el("button", "btn " + (cls || ""), label);
 
-            b.type = "button";
-            b.onclick = () => close(value);
-            row.append(b);
+            button.type = "button";
+            button.onclick = () => close(value);
+            row.append(button);
         }
 
         $("scrim").hidden = false;
-        $("scrim").onkeydown = (e) =>
+        $("scrim").onkeydown = (event) =>
         {
-            if (e.key === "Escape") close(null);
+            if (event.key === "Escape") close(null);
         };
 
         row.firstElementChild.focus();
@@ -153,55 +164,57 @@ function dialog(title, body, buttons)
 
 let page = "overview";
 
-function go(p)
+// Opens a page and loads what it shows.
+function go(target)
 {
-    page = p;
+    page = target;
 
-    for (const b of document.querySelectorAll(".side > button")) if (b.dataset.page === p) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
-    for (const m of document.querySelectorAll(".page")) m.hidden = m.id !== "page-" + p;
+    for (const button of document.querySelectorAll(".side > button")) if (button.dataset.page === target) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+    for (const section of document.querySelectorAll(".page")) section.hidden = section.id !== "page-" + target;
 
-    if (p === "overview") loadOverview();
-    if (p === "accounts") loadAccounts();
-    if (p === "signups") loadSignups();
-    if (p === "notices") loadNotices();
+    if (target === "overview") loadOverview();
+    if (target === "accounts") loadAccounts();
+    if (target === "signups") loadSignups();
+    if (target === "notices") loadNotices();
 }
 
 let lastSignups = null;
 
+// The Overview page: server check, warnings, installs, usage and health.
 async function loadOverview()
 {
     $("ov-loading").hidden = false;
 
     try
     {
-        const o = await api("overview");
+        const overview = await api("overview");
 
-        lastSignups = o.db.signups;
-        $("srv-url").textContent = (o.server.url || "").replace("https://", "");
-        $("sign-in").textContent = o.sign_in === "token" ? "Using the database-only token" : "Using your Wrangler login";
+        lastSignups = overview.db.signups;
+        $("srv-url").textContent = (overview.server.url || "").replace("https://", "");
+        $("sign-in").textContent = overview.sign_in === "token" ? "Using the database-only token" : "Using your Wrangler login";
         $("ov").hidden = false;
 
-        const w = $("warns");
+        const warnBox = $("warns");
 
-        w.replaceChildren();
+        warnBox.replaceChildren();
 
-        if (!o.warnings.length) w.append(el("div", "okbox", "All good. Nothing needs your attention."));
+        if (!overview.warnings.length) warnBox.append(el("div", "okbox", "All good. Nothing needs your attention."));
 
-        for (const x of o.warnings)
+        for (const warning of overview.warnings)
         {
-            const b = el("div", "warnbox");
+            const box = el("div", "warnbox");
             const inner = el("div");
 
-            inner.append(el("div", "t", x.text), el("div", "small", x.fix));
-            b.append(inner);
-            w.append(b);
+            inner.append(el("div", "t", warning.text), el("div", "small", warning.fix));
+            box.append(inner);
+            warnBox.append(box);
         }
 
-        $("s-accounts").textContent = fmt(o.db.accounts);
-        $("s-active").textContent = fmt(o.db.active_today);
-        $("s-pairings").textContent = fmt(o.db.pairings);
+        $("s-accounts").textContent = fmt(overview.db.accounts);
+        $("s-active").textContent = fmt(overview.db.active_today);
+        $("s-pairings").textContent = fmt(overview.db.pairings);
 
-        const ins = o.installs;
+        const ins = overview.installs;
 
         kv($("inst-rows"),
         [
@@ -211,81 +224,82 @@ async function loadOverview()
             ["New in the last 7 days", fmt(ins.new_7d)],
         ]);
 
-        kv($("inst-vers"), ins.versions.length ? ins.versions.map((v) => [v.version, fmt(v.pcs)]) : [["None yet", ""]]);
+        kv($("inst-vers"), ins.versions.length ? ins.versions.map((entry) => [entry.version, fmt(entry.pcs)]) : [["None yet", ""]]);
 
-        const s = o.server;
+        const server = overview.server;
 
         kv($("server-rows"),
         [
-            ["Status", s.ok ? "Online" : "Not answering", s.ok ? "good" : "bad"],
-            ["Response time", s.ms != null ? s.ms + " ms" : "-"],
-            ["API version", s.api != null ? String(s.api) : "-"],
-            ["Oldest app allowed", s.min_app || "-"],
-            ["Hourly job last ran", o.cron.last ? ago(o.cron.last) : "not recorded yet", o.cron.last && Date.now() / 1000 - o.cron.last < 7200 ? "" : "warn-t"],
-            ["Daily cleanup last ran", o.cron.cleanup_last ? ago(o.cron.cleanup_last) : "not recorded yet"],
-            ["Last usage alert email", o.cron.last_alert || "none"],
-            ["Stored copies", fmt(o.db.slots) + " (" + Math.round(o.db.packet_bytes / 1024) + " KB)"],
+            ["Status", server.ok ? "Online" : "Not answering", server.ok ? "good" : "bad"],
+            ["Response time", server.ms != null ? server.ms + " ms" : "-"],
+            ["API version", server.api != null ? String(server.api) : "-"],
+            ["Oldest app allowed", server.min_app || "-"],
+            ["Hourly job last ran", overview.cron.last ? ago(overview.cron.last) : "not recorded yet", overview.cron.last && Date.now() / 1000 - overview.cron.last < 7200 ? "" : "warn-t"],
+            ["Daily cleanup last ran", overview.cron.cleanup_last ? ago(overview.cron.cleanup_last) : "not recorded yet"],
+            ["Last usage alert email", overview.cron.last_alert || "none"],
+            ["Stored copies", fmt(overview.db.slots) + " (" + Math.round(overview.db.packet_bytes / 1024) + " KB)"],
         ]);
 
-        const m = $("meters");
+        const meters = $("meters");
 
-        m.replaceChildren();
+        meters.replaceChildren();
 
-        for (const r of (o.usage ? o.usage.rows : []))
+        for (const row of (overview.usage ? overview.usage.rows : []))
         {
-            const d = el("div", "meter");
+            const meter = el("div", "meter");
             const top = el("div", "row-between");
 
-            top.append(el("span", "", r.name), el("span", r.percent >= 50 ? "warn-t" : "", fmt(r.used) + " of " + fmt(r.limit) + " · " + r.percent.toFixed(0) + "%"));
+            top.append(el("span", "", row.name), el("span", row.percent >= 50 ? "warn-t" : "", fmt(row.used) + " of " + fmt(row.limit) + " · " + row.percent.toFixed(0) + "%"));
 
             const bar = el("div", "bar");
-            const i = el("i", r.percent >= 50 ? "warn" : "");
+            const fill = el("i", row.percent >= 50 ? "warn" : "");
 
-            i.style.width = Math.min(100, Math.max(0.8, r.percent)) + "%";
-            bar.append(i);
+            fill.style.width = Math.min(100, Math.max(0.8, row.percent)) + "%";
+            bar.append(fill);
 
-            d.append(top, bar);
-            m.append(d);
+            meter.append(top, bar);
+            meters.append(meter);
         }
 
-        const h = o.health;
+        const health = overview.health;
 
-        kv($("health"), h ?
+        kv($("health"), health ?
         [
-            ["Server errors today", fmt(h.errors) + (h.requests ? " (" + h.error_pct.toFixed(1) + "%)" : ""), h.error_pct >= 5 && h.requests >= 50 ? "warn-t" : ""],
-            ["CPU per request, typical", h.cpuP50.toFixed(1) + " ms"],
-            ["CPU per request, slowest", h.cpuP99.toFixed(1) + " ms of 10", h.cpuP99 >= 7 ? "warn-t" : ""],
+            ["Server errors today", fmt(health.errors) + (health.requests ? " (" + health.error_pct.toFixed(1) + "%)" : ""), health.error_pct >= 5 && health.requests >= 50 ? "warn-t" : ""],
+            ["CPU per request, typical", health.cpuP50.toFixed(1) + " ms"],
+            ["CPU per request, slowest", health.cpuP99.toFixed(1) + " ms of 10", health.cpuP99 >= 7 ? "warn-t" : ""],
         ] : []);
-        $("notes").replaceChildren(...o.notes.map((n) => el("div", "", n)));
+        $("notes").replaceChildren(...overview.notes.map((note) => el("div", "", note)));
 
         kv($("signup-rows"),
         [
-            ["Sign-up", o.db.signups === "open" ? "Open" : "Invite only", o.db.signups === "open" ? "good" : "warn-t"],
-            ["New accounts, 24 hours", fmt(o.db.new_24h), o.db.new_24h >= 20 ? "warn-t" : ""],
-            ["New accounts, 7 days", fmt(o.db.new_7d)],
-            ["Never paired yet", fmt(o.db.unpaired_new)],
+            ["Sign-up", overview.db.signups === "open" ? "Open" : "Invite only", overview.db.signups === "open" ? "good" : "warn-t"],
+            ["New accounts, 24 hours", fmt(overview.db.new_24h), overview.db.new_24h >= 20 ? "warn-t" : ""],
+            ["New accounts, 7 days", fmt(overview.db.new_7d)],
+            ["Never paired yet", fmt(overview.db.unpaired_new)],
         ]);
 
-        const c = o.cleanup_preview;
+        const cleanup = overview.cleanup_preview;
 
         kv($("cleanup-rows"),
         [
-            ["Unpaired accounts over 7 days", fmt(c.unpaired_accounts)],
-            ["Accounts idle 12 months", fmt(c.idle_accounts)],
-            ["Copies untouched 30 days", fmt(c.old_copies)],
-            ["Ended pairings over 30 days", fmt(c.old_pairings)],
-            ["Expired codes", fmt(c.expired_codes)],
+            ["Unpaired accounts over 7 days", fmt(cleanup.unpaired_accounts)],
+            ["Accounts idle 12 months", fmt(cleanup.idle_accounts)],
+            ["Copies untouched 30 days", fmt(cleanup.old_copies)],
+            ["Ended pairings over 30 days", fmt(cleanup.old_pairings)],
+            ["Expired codes", fmt(cleanup.expired_codes)],
         ]);
     }
 
-    catch (e)
+    catch (error)
     {
-        fail(e);
+        fail(error);
     }
 
     $("ov-loading").hidden = true;
 }
 
+// The Accounts page, with ban and unban buttons.
 async function loadAccounts()
 {
     const body = $("ac-rows");
@@ -298,79 +312,80 @@ async function loadAccounts()
 
         if (!rows.length)
         {
-            const tr = el("tr");
-            const td = el("td", "muted", "No accounts yet.");
+            const row = el("tr");
+            const cell = el("td", "muted", "No accounts yet.");
 
-            td.colSpan = 6;
-            tr.append(td);
-            body.append(tr);
+            cell.colSpan = 6;
+            row.append(cell);
+            body.append(row);
         }
 
-        for (const r of rows)
+        for (const account of rows)
         {
-            const tr = el("tr");
+            const row = el("tr");
 
-            tr.append(el("td", r.characters ? "" : "muted", r.characters || "(no characters yet)"), el("td", "mono", r.account), el("td", "", String(r.pairings)), el("td", "", String(r.pcs)), el("td", "", day(r.last_seen)));
+            row.append(el("td", account.characters ? "" : "muted", account.characters || "(no characters yet)"), el("td", "mono", account.account), el("td", "", String(account.pairings)), el("td", "", String(account.pcs)), el("td", "", day(account.last_seen)));
 
             const act = el("td");
 
-            if (r.banned)
+            if (account.banned)
             {
                 act.append(el("span", "bad", "Banned "));
 
-                const b = el("button", "btn", "Unban");
+                const button = el("button", "btn", "Unban");
 
-                b.type = "button";
+                button.type = "button";
 
-                b.onclick = async () =>
+                button.onclick = async () =>
                 {
-                    const ok = await dialog("Unban this account?", [el("div", "small muted mono", r.account), el("p", "", "It can sign in again. Its old pairings stay ended; friends pair again with new codes.")], [["Cancel", false, "ghost"], ["Unban", true, ""]]);
+                    const ok = await dialog("Unban this account?", [el("div", "small muted mono", account.account), el("p", "", "It can sign in again. Its old pairings stay ended; friends pair again with new codes.")], [["Cancel", false, "ghost"], ["Unban", true, ""]]);
 
-                    if (ok) busy(b, async () =>
+                    if (ok) busy(button, async () =>
                     {
-                        toast((await api("unban", { id: r.account })).message);
+                        toast((await api("unban", { id: account.account })).message);
                         loadAccounts();
                     });
                 };
 
-                act.append(b);
+                act.append(button);
             }
 
             else
             {
-                const b = el("button", "btn bad", "Ban...");
+                const button = el("button", "btn bad", "Ban...");
 
-                b.type = "button";
+                button.type = "button";
 
-                b.onclick = async () =>
+                button.onclick = async () =>
                 {
                     const who = el("div", "small muted");
 
-                    who.append("Account ", el("span", "mono", r.account), r.characters ? " (" + r.characters + ")" : "");
+                    who.append("Account ", el("span", "mono", account.account), account.characters ? " (" + account.characters + ")" : "");
 
                     const ok = await dialog("Ban this account?", [who, el("p", "", "Its pairings end, its stored copies and codes are deleted, and it can no longer sign in. You can unban later, but pairings stay ended.")], [["Cancel", false, "ghost"], ["Ban account", true, "bad"]]);
 
-                    if (ok) busy(b, async () =>
+                    if (ok) busy(button, async () =>
                     {
-                        toast((await api("ban", { id: r.account })).message);
+                        toast((await api("ban", { id: account.account })).message);
                         loadAccounts();
                     });
                 };
 
-                act.append(b);
+                act.append(button);
             }
 
-            tr.append(act);
-            body.append(tr);
+            row.append(act);
+            body.append(row);
         }
     }
 
-    catch (e)
+    catch (error)
     {
-        fail(e);
+        fail(error);
     }
 }
 
+// Shows whether sign-ups are open or invite only.
 async function loadSignups()
 {
     if (lastSignups === null) { try
@@ -378,9 +393,9 @@ async function loadSignups()
         lastSignups = (await api("overview")).db.signups;
     }
 
-    catch (e)
+    catch (error)
     {
-        return fail(e);
+        return fail(error);
     }
     }
 
@@ -426,35 +441,37 @@ $("backup").onclick = () => busy($("backup"), async () =>
 
 $("open-backups").onclick = () => api("openbackups").catch(fail);
 
-for (const b of document.querySelectorAll("[data-page]")) b.addEventListener("click", () => go(b.dataset.page));
+for (const button of document.querySelectorAll("[data-page]")) button.addEventListener("click", () => go(button.dataset.page));
 
 // ---------------------------------------------------------------- notices
 
 const LEVEL_NAME = { info: "Gold: news", warn: "Amber: heads-up", bad: "Red: action needed" };
 
-function versionsText(n)
+// Which app versions a notice is for, in words.
+function versionsText(notice)
 {
-    if (n.from && n.to) return n.from === n.to ? "App " + n.from : "Apps " + n.from + " to " + n.to;
-    if (n.to) return "Apps " + n.to + " and older";
-    if (n.from) return "Apps " + n.from + " and newer";
+    if (notice.from && notice.to) return notice.from === notice.to ? "App " + notice.from : "Apps " + notice.from + " to " + notice.to;
+    if (notice.to) return "Apps " + notice.to + " and older";
+    if (notice.from) return "Apps " + notice.from + " and newer";
 
     return "Every app version";
 }
 
-function noticeBox(n, withMeta)
+// A notice as the app shows it, with its details when asked.
+function noticeBox(notice, withMeta)
 {
-    const box = el("div", "notice " + n.level);
+    const box = el("div", "notice " + notice.level);
     const left = el("div");
 
-    left.append(el("div", "t", n.text));
+    left.append(el("div", "t", notice.text));
 
     if (withMeta)
     {
-        const bits = [LEVEL_NAME[n.level], versionsText(n)];
+        const bits = [LEVEL_NAME[notice.level], versionsText(notice)];
 
-        if (n.link) bits.push("Button: " + n.link.replace("https://", ""));
+        if (notice.link) bits.push("Button: " + notice.link.replace("https://", ""));
 
-        bits.push(n.until ? "Ends " + new Date(n.until * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Stays until removed");
+        bits.push(notice.until ? "Ends " + new Date(notice.until * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Stays until removed");
         left.append(el("div", "meta", bits.join(" · ")));
     }
 
@@ -463,6 +480,7 @@ function noticeBox(n, withMeta)
     return box;
 }
 
+// The Notices page: the live notices and the form to add one.
 async function loadNotices()
 {
     const list = $("no-list");
@@ -474,55 +492,56 @@ async function loadNotices()
         list.replaceChildren();
 
         const now = Date.now() / 1000;
-        const live = rows.filter((n) => !n.until || n.until > now);
+        const live = rows.filter((notice) => !notice.until || notice.until > now);
 
         if (!live.length) list.append(el("div", "muted", "No notices. Apps show nothing extra."));
 
-        for (const n of live)
+        for (const notice of live)
         {
-            const box = noticeBox(n, true);
-            const b = el("button", "btn bad", "Remove");
+            const box = noticeBox(notice, true);
+            const button = el("button", "btn bad", "Remove");
 
-            b.type = "button";
+            button.type = "button";
 
-            b.onclick = async () =>
+            button.onclick = async () =>
             {
-                const ok = await dialog("Remove this notice?", [noticeBox(n, false), el("p", "", "Apps stop showing it at their next check.")], [["Cancel", false, "ghost"], ["Remove", true, "bad"]]);
+                const ok = await dialog("Remove this notice?", [noticeBox(notice, false), el("p", "", "Apps stop showing it at their next check.")], [["Cancel", false, "ghost"], ["Remove", true, "bad"]]);
 
-                if (ok) busy(b, async () =>
+                if (ok) busy(button, async () =>
                 {
-                    toast((await api("removenotice", { id: n.id })).message);
+                    toast((await api("removenotice", { id: notice.id })).message);
                     loadNotices();
                 });
             };
 
-            box.append(b);
+            box.append(button);
             list.append(box);
         }
     }
 
-    catch (e)
+    catch (error)
     {
-        fail(e);
+        fail(error);
     }
 }
 
+// Shows the new notice as the app will show it while it's typed.
 function previewNotice()
 {
     const text = $("no-text").value.replace(/\s+/g, " ").trim();
 
     $("no-count").textContent = $("no-text").value.length + " / 240";
 
-    const p = $("no-preview");
+    const placeholder = $("no-preview");
 
-    p.className = "notice " + $("no-level").value;
-    p.replaceChildren(noticeBox({ text: text || "Your message shows here.", level: $("no-level").value }, false).firstChild);
+    placeholder.className = "notice " + $("no-level").value;
+    placeholder.replaceChildren(noticeBox({ text: text || "Your message shows here.", level: $("no-level").value }, false).firstChild);
 
     if ($("no-link").value.trim())
     {
-        const b = el("span", "btn", "Open");
+        const button = el("span", "btn", "Open");
 
-        p.append(b);
+        placeholder.append(button);
     }
 }
 
@@ -536,11 +555,11 @@ $("no-post").onclick = async () =>
         link: $("no-link").value.trim(), days: Number($("no-days").value),
     };
 
-    const n = { ...fields, text: fields.text.replace(/\s+/g, " ").trim(), until: fields.days ? Math.floor(Date.now() / 1000) + fields.days * 86400 : undefined };
+    const notice = { ...fields, text: fields.text.replace(/\s+/g, " ").trim(), until: fields.days ? Math.floor(Date.now() / 1000) + fields.days * 86400 : undefined };
 
-    if (!n.text) return toast("Write a message first.", true);
+    if (!notice.text) return toast("Write a message first.", true);
 
-    const ok = await dialog("Post this notice?", [noticeBox(n, true), el("p", "", "Every Companion app in that version range shows it on its Home page.")], [["Cancel", false, "ghost"], ["Post notice", true, "primary"]]);
+    const ok = await dialog("Post this notice?", [noticeBox(notice, true), el("p", "", "Every Companion app in that version range shows it on its Home page.")], [["Cancel", false, "ghost"], ["Post notice", true, "primary"]]);
 
     if (!ok) return;
 
